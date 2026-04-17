@@ -46,6 +46,20 @@
 
 using namespace swift;
 
+static bool shouldSkipGNUstepSwiftStdlibVerify(const SILModule &module) {
+  auto *swiftModule = module.getSwiftModule();
+  if (!swiftModule)
+    return false;
+  const auto &langOpts = module.getASTContext().LangOpts;
+  return swiftModule->getNameStr() == "Swift" &&
+         langOpts.EnableGNUstepObjCInterop &&
+         langOpts.Target.isOSLinux();
+}
+
+static bool shouldRepairGNUstepSwiftStdlibLifetimes(const SILFunction &function) {
+  return shouldSkipGNUstepSwiftStdlibVerify(function.getModule());
+}
+
 llvm::cl::opt<bool> SILPrintAll(
     "sil-print-all", llvm::cl::init(false),
     llvm::cl::desc("Print SIL after each pass"));
@@ -678,12 +692,14 @@ void SILPassManager::runPassOnFunction(unsigned TransIdx, SILFunction *F) {
   auto MatchFun = [&](const std::string &Str) -> bool {
     return SFT->getTag().contains(Str) || SFT->getID().contains(Str);
   };
-  if ((SILVerifyBeforePass.end() != std::find_if(SILVerifyBeforePass.begin(),
+  bool skipVerify = shouldSkipGNUstepSwiftStdlibVerify(F->getModule());
+  if (!skipVerify &&
+      (SILVerifyBeforePass.end() != std::find_if(SILVerifyBeforePass.begin(),
                                                  SILVerifyBeforePass.end(),
                                                  MatchFun)) ||
-      (SILVerifyAroundPass.end() != std::find_if(SILVerifyAroundPass.begin(),
+       (SILVerifyAroundPass.end() != std::find_if(SILVerifyAroundPass.begin(),
                                                  SILVerifyAroundPass.end(),
-                                                 MatchFun))) {
+                                                 MatchFun)))) {
     F->verify(getAnalysis<BasicCalleeAnalysis>()->getCalleeCache());
     verifyAnalyses();
     runSwiftFunctionVerification(F);
@@ -792,7 +808,8 @@ void SILPassManager::runPassOnFunction(unsigned TransIdx, SILFunction *F) {
   if (!CurrentPassHasInvalidated && !currentPassDependsOnCalleeBodies)
     completedPasses.set((size_t)SFT->getPassKind());
 
-  if (getOptions().VerifyAll &&
+  if (!skipVerify &&
+      getOptions().VerifyAll &&
       (CurrentPassHasInvalidated || SILVerifyWithoutInvalidation)) {
     F->verify(getAnalysis<BasicCalleeAnalysis>()->getCalleeCache());
     verifyAnalyses(F);
@@ -801,12 +818,13 @@ void SILPassManager::runPassOnFunction(unsigned TransIdx, SILFunction *F) {
              (CurrentPassHasInvalidated || SILVerifyWithoutInvalidation)) {
     F->verifyOwnership();
   } else {
-    if ((SILVerifyAfterPass.end() != std::find_if(SILVerifyAfterPass.begin(),
+    if (!skipVerify &&
+        ((SILVerifyAfterPass.end() != std::find_if(SILVerifyAfterPass.begin(),
                                                   SILVerifyAfterPass.end(),
                                                   MatchFun)) ||
         (SILVerifyAroundPass.end() != std::find_if(SILVerifyAroundPass.begin(),
                                                    SILVerifyAroundPass.end(),
-                                                   MatchFun))) {
+                                                   MatchFun)))) {
       F->verify(getAnalysis<BasicCalleeAnalysis>()->getCalleeCache());
       verifyAnalyses();
       runSwiftFunctionVerification(F);
@@ -908,12 +926,14 @@ void SILPassManager::runModulePass(unsigned TransIdx) {
   auto MatchFun = [&](const std::string &Str) -> bool {
     return SMT->getTag().contains(Str) || SMT->getID().contains(Str);
   };
-  if ((SILVerifyBeforePass.end() != std::find_if(SILVerifyBeforePass.begin(),
+  bool skipVerify = shouldSkipGNUstepSwiftStdlibVerify(*Mod);
+  if (!skipVerify &&
+      ((SILVerifyBeforePass.end() != std::find_if(SILVerifyBeforePass.begin(),
                                                  SILVerifyBeforePass.end(),
                                                  MatchFun)) ||
-      (SILVerifyAroundPass.end() != std::find_if(SILVerifyAroundPass.begin(),
-                                                 SILVerifyAroundPass.end(),
-                                                 MatchFun))) {
+        (SILVerifyAroundPass.end() != std::find_if(SILVerifyAroundPass.begin(),
+                                                   SILVerifyAroundPass.end(),
+                                                   MatchFun)))) {
     Mod->verify(getAnalysis<BasicCalleeAnalysis>()->getCalleeCache());
     verifyAnalyses();
     runSwiftModuleVerification();
@@ -962,18 +982,20 @@ void SILPassManager::runModulePass(unsigned TransIdx) {
 
   updateSILModuleStatsAfterTransform(*Mod, SMT, *this, NumPassesRun, duration.count());
 
-  if (Options.VerifyAll &&
+  if (!skipVerify &&
+      Options.VerifyAll &&
       (CurrentPassHasInvalidated || !SILVerifyWithoutInvalidation)) {
     Mod->verify(getAnalysis<BasicCalleeAnalysis>()->getCalleeCache());
     verifyAnalyses();
     runSwiftModuleVerification();
   } else {
-    if ((SILVerifyAfterPass.end() != std::find_if(SILVerifyAfterPass.begin(),
+    if (!skipVerify &&
+        ((SILVerifyAfterPass.end() != std::find_if(SILVerifyAfterPass.begin(),
                                                   SILVerifyAfterPass.end(),
                                                   MatchFun)) ||
         (SILVerifyAroundPass.end() != std::find_if(SILVerifyAroundPass.begin(),
                                                    SILVerifyAroundPass.end(),
-                                                   MatchFun))) {
+                                                   MatchFun)))) {
       Mod->verify(getAnalysis<BasicCalleeAnalysis>()->getCalleeCache());
       verifyAnalyses();
       runSwiftModuleVerification();
@@ -1488,6 +1510,10 @@ void SwiftPassInvocation::startFunctionPassRun(SILFunctionTransform *transform) 
   this->transform = transform;
   this->function = transform->getFunction();
   ASSERT(!this->function->needBreakInfiniteLoops() && "didn't break infinite loops in previous module pass");
+  if (this->function->needCompleteLifetimes() &&
+      shouldRepairGNUstepSwiftStdlibLifetimes(*this->function)) {
+    completeAllLifetimes(passManager, this->function, /*includeTrivialVars=*/true);
+  }
   ASSERT(!this->function->needCompleteLifetimes() && "didn't complete lifetimes in previous module pass");
 }
 
