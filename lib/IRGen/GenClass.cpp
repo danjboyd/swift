@@ -2014,6 +2014,33 @@ namespace {
     llvm::Constant *buildMethodList(ArrayRef<MethodDescriptor> methods,
                                     StringRef name,
                                     llvm::GlobalValue::LinkageTypes linkage) {
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        if (methods.empty())
+          return null();
+
+        ConstantInitBuilder builder(IGM);
+        auto fields = builder.beginStruct();
+        fields.addNullPointer(IGM.OpaquePtrTy);
+        auto countPosition = fields.addPlaceholder();
+        fields.addInt(IGM.SizeTy, (3 * IGM.getPointerSize()).getValue());
+
+        auto array = fields.beginArray();
+        for (auto descriptor : methods)
+          buildMethod(array, descriptor);
+
+        if (array.empty()) {
+          array.abandon();
+          fields.abandon();
+          return null();
+        }
+
+        auto count = array.size();
+        array.finishAndAddTo(fields);
+        fields.fillPlaceholderWithInt(countPosition, IGM.Int32Ty, count);
+
+        return buildGlobalVariable(fields, name, /*isConst*/ false, linkage);
+      }
+
       return buildOptionalList(
           methods, 3 * IGM.getPointerSize(), name,
           /*isConst*/ false, linkage,
