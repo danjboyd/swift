@@ -603,6 +603,24 @@ function(_add_swift_runtime_link_flags target relpath_to_lib_dir bootstrapping)
       # FIXME: This assumes the ABI hasn't changed since the builder.
       set(swift_runtime_rpath "$ORIGIN/${relpath_to_lib_dir}/swift/${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_LIB_SUBDIR}")
 
+      # A standard library built with Objective-C interop for the GNUstep
+      # runtime does not have the ABI that the compiler's Swift code was built
+      # for: Objective-C interop changes the class metadata layout, among
+      # other things.  Keep the compiler on the host toolchain's runtime.
+      # The run path becomes an RPATH, which the dynamic loader searches
+      # before LD_LIBRARY_PATH, and the runtime libraries that the compiler's
+      # Swift dependencies use become direct dependencies, so that none of
+      # them comes from the GNUstep interop standard library.
+      if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
+        set(swift_runtime_rpath "${host_lib_dir}")
+        target_link_options(${target} PRIVATE
+          "LINKER:--disable-new-dtags"
+          "LINKER:--push-state,--no-as-needed"
+          "-lswift_Concurrency" "-lswiftGlibc" "-ldispatch" "-lBlocksRuntime"
+          "-lswift_Builtin_float"
+          "LINKER:--pop-state")
+      endif()
+
     elseif(ASRLF_BOOTSTRAPPING_MODE STREQUAL "BOOTSTRAPPING")
       # At build time link against the built swift libraries from the
       # previous bootstrapping stage.
