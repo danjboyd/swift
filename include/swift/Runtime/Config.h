@@ -104,9 +104,10 @@
 /// field of the object.
 ///
 /// According to the Objective-C ABI, this is true only for 64-bit
-/// platforms.
+/// platforms.  The GNUstep runtime never packs the isa.
 #ifndef SWIFT_HAS_ISA_MASKING
-#if SWIFT_OBJC_INTEROP && __POINTER_WIDTH__ == 64
+#if SWIFT_OBJC_INTEROP && __POINTER_WIDTH__ == 64 && \
+    !defined(__GNUSTEP_RUNTIME__)
 #define SWIFT_HAS_ISA_MASKING 1
 #else
 #define SWIFT_HAS_ISA_MASKING 0
@@ -119,6 +120,11 @@
 /// ISA.
 #ifndef SWIFT_HAS_OPAQUE_ISAS
 #if defined(__arm__) && __ARM_ARCH_7K__ >= 2
+#define SWIFT_HAS_OPAQUE_ISAS 1
+#elif SWIFT_OBJC_INTEROP && defined(__GNUSTEP_RUNTIME__)
+// The GNUstep runtime inserts hidden classes into an object's isa, for
+// example when an associated object is set, so the class must come from
+// object_getClass().
 #define SWIFT_HAS_OPAQUE_ISAS 1
 #else
 #define SWIFT_HAS_OPAQUE_ISAS 0
@@ -155,7 +161,13 @@ extern uintptr_t __COMPATIBILITY_LIBRARIES_CANNOT_CHECK_THE_IS_SWIFT_BIT_DIRECTL
 # elif defined(__APPLE__)
 #  define SWIFT_CLASS_IS_SWIFT_MASK 2ULL
 
-// Non-Apple platforms always use 1.
+// Objective-C interop on other platforms (the GNUstep runtime) also uses 2,
+// which is what the compiler sets in Swift class metadata whenever it emits
+// Objective-C compatible class objects.
+# elif SWIFT_OBJC_INTEROP
+#  define SWIFT_CLASS_IS_SWIFT_MASK 2ULL
+
+// Other non-Apple platforms use 1.
 # else
 #  define SWIFT_CLASS_IS_SWIFT_MASK 1ULL
 
