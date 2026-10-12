@@ -5154,9 +5154,12 @@ namespace {
     }
 
     void addMetaclassObject(ConstantStructBuilder &B) {
-      // isa
-      ClassDecl *rootClass = getRootClassForMetaclass(IGM, Target);
-      auto isa = IGM.getAddrOfMetaclassObject(rootClass, NotForDefinition);
+      // isa; the GNUstep runtime links metaclasses when it loads classes.
+      llvm::Constant *isa = llvm::ConstantPointerNull::get(IGM.ObjCClassPtrTy);
+      if (!IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        ClassDecl *rootClass = getRootClassForMetaclass(IGM, Target);
+        isa = IGM.getAddrOfMetaclassObject(rootClass, NotForDefinition);
+      }
       B.add(isa);
       // super, which is dependent if the superclass is generic
       B.addNullPointer(IGM.ObjCClassPtrTy);

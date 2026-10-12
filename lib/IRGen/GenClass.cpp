@@ -1355,37 +1355,57 @@ namespace {
       std::optional<CanType> specializedGenericType =
           getSpecializedGenericType();
 
-      // The isa is the metaclass pointer for the root class.
-      auto rootClass = getRootClassForMetaclass(IGM, getClass());
-      Type rootType;
-      if (specializedGenericType && rootClass->isGenericContext()) {
-        rootType =
-            (*specializedGenericType)->getRootClass(
-               /*useArchetypes=*/false);
+      llvm::Constant *uncastMetaclass;
+      if (specializedGenericType) {
+        uncastMetaclass =
+            IGM.getAddrOfCanonicalSpecializedGenericMetaclassObject(
+                *specializedGenericType, ForDefinition);
       } else {
-        rootType = Type();
+        uncastMetaclass =
+            IGM.getAddrOfMetaclassObject(getClass(), ForDefinition);
       }
-      auto rootPtr = getMetaclassRefOrNull(rootType, rootClass);
 
-      // The superclass of the metaclass is the metaclass of the
-      // superclass.  Note that for metaclass stubs, we can always
-      // ignore parent contexts and generic arguments.
-      //
-      // If this class has no formal superclass, then its actual
-      // superclass is SwiftObject, i.e. the root class.
+      llvm::Constant *rootPtr;
       llvm::Constant *superPtr;
-      if (auto base = getSuperclassDeclForMetadata(IGM, getClass())) {
-        if (specializedGenericType && base->isGenericContext()) {
-          superPtr = getMetaclassRefOrNull(
-              getSuperclassForMetadata(IGM, *specializedGenericType,
-                                       /*useArchetypes=*/false),
-              base);
-        } else {
-          superPtr = getMetaclassRefOrNull(Type(), base);
-        }
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        // GNUstep's loader initializes metaclass isa / superclass links from
+        // the class records.  Emitting external metaclass references here is
+        // incompatible with the GNUstep symbol model because metaclass symbols
+        // are kept local to the defining object.
+        rootPtr = llvm::ConstantPointerNull::get(IGM.ObjCClassPtrTy);
+        superPtr = llvm::ConstantPointerNull::get(IGM.ObjCClassPtrTy);
       } else {
-        superPtr = getMetaclassRefOrNull(
-            Type(), IGM.getObjCRuntimeBaseForSwiftRootClass(getClass()));
+        // The isa is the metaclass pointer for the root class.
+        auto rootClass = getRootClassForMetaclass(IGM, getClass());
+        Type rootType;
+        if (specializedGenericType && rootClass->isGenericContext()) {
+          rootType =
+              (*specializedGenericType)->getRootClass(
+                 /*useArchetypes=*/false);
+        } else {
+          rootType = Type();
+        }
+        rootPtr = getMetaclassRefOrNull(rootType, rootClass);
+
+        // The superclass of the metaclass is the metaclass of the
+        // superclass.  Note that for metaclass stubs, we can always
+        // ignore parent contexts and generic arguments.
+        //
+        // If this class has no formal superclass, then its actual
+        // superclass is SwiftObject, i.e. the root class.
+        if (auto base = getSuperclassDeclForMetadata(IGM, getClass())) {
+          if (specializedGenericType && base->isGenericContext()) {
+            superPtr = getMetaclassRefOrNull(
+                getSuperclassForMetadata(IGM, *specializedGenericType,
+                                         /*useArchetypes=*/false),
+                base);
+          } else {
+            superPtr = getMetaclassRefOrNull(Type(), base);
+          }
+        } else {
+          superPtr = getMetaclassRefOrNull(
+              Type(), IGM.getObjCRuntimeBaseForSwiftRootClass(getClass()));
+        }
       }
 
       auto dataPtr = emitROData(ForMetaClass, DoesNotHaveUpdateCallback);
@@ -1397,24 +1417,46 @@ namespace {
 
       dataPtr = llvm::ConstantExpr::getPtrToInt(dataPtr, IGM.IntPtrTy);
 
-      llvm::Constant *fields[] = {
-        rootPtr,
-        superPtr,
-        IGM.getObjCEmptyCachePtr(),
-        IGM.getObjCEmptyVTablePtr(),
-        dataPtr
-      };
+      llvm::SmallVector<llvm::Constant *, 17> fields;
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        auto nullClass = llvm::ConstantPointerNull::get(IGM.ObjCClassPtrTy);
+        auto nullOpaque = llvm::ConstantPointerNull::get(IGM.OpaquePtrTy);
+        auto nullFunction = llvm::ConstantPointerNull::get(IGM.FunctionPtrTy);
+        auto selfMetaclass =
+            llvm::ConstantExpr::getBitCast(uncastMetaclass,
+                                           IGM.ObjCClassPtrTy);
+
+        fields.append({
+          selfMetaclass,
+          superPtr,
+          buildName(),
+          llvm::ConstantInt::get(IGM.IntPtrTy, 0),
+          llvm::ConstantInt::get(IGM.IntPtrTy, 1),
+          llvm::ConstantInt::get(IGM.IntPtrTy, 0),
+          nullOpaque,
+          buildMethodList(MethodListKind::ClassMethods,
+                          llvm::GlobalVariable::InternalLinkage),
+          nullOpaque,
+          nullClass,
+          nullFunction,
+          nullFunction,
+          nullClass,
+          nullOpaque,
+          nullOpaque,
+          llvm::ConstantInt::get(IGM.IntPtrTy, 0),
+          nullOpaque
+        });
+      } else {
+        fields.append({
+          rootPtr,
+          superPtr,
+          IGM.getObjCEmptyCachePtr(),
+          IGM.getObjCEmptyVTablePtr(),
+          dataPtr
+        });
+      }
       auto init = llvm::ConstantStruct::get(IGM.ObjCClassStructTy,
                                             llvm::ArrayRef(fields));
-      llvm::Constant *uncastMetaclass;
-      if (specializedGenericType) {
-        uncastMetaclass =
-            IGM.getAddrOfCanonicalSpecializedGenericMetaclassObject(
-                *specializedGenericType, ForDefinition);
-      } else {
-        uncastMetaclass =
-            IGM.getAddrOfMetaclassObject(getClass(), ForDefinition);
-      }
       auto metaclass = cast<llvm::GlobalVariable>(uncastMetaclass);
       metaclass->setInitializer(init);
     }
@@ -1897,6 +1939,11 @@ namespace {
     void emitAndAddMethodList(ConstantInitBuilder::StructBuilder &builder,
                               MethodListKind kind,
                               llvm::GlobalValue::LinkageTypes linkage) {
+      builder.add(buildMethodList(kind, linkage));
+    }
+
+    llvm::Constant *buildMethodList(MethodListKind kind,
+                                    llvm::GlobalValue::LinkageTypes linkage) {
       ArrayRef<MethodDescriptor> methods;
       StringRef namePrefix;
       switch (kind) {
@@ -1921,9 +1968,7 @@ namespace {
         namePrefix = "_PROTOCOL_INSTANCE_METHODS_OPT_";
         break;
       }
-      llvm::Constant *methodListPtr =
-          buildMethodList(methods, namePrefix, linkage);
-      builder.add(methodListPtr);
+      return buildMethodList(methods, namePrefix, linkage);
     }
 
     llvm::Constant *buildOptExtendedMethodTypes() {
