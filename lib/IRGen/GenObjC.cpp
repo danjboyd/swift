@@ -579,7 +579,11 @@ llvm::Constant *IRGenModule::emitClangProtocolObject(
     const clang::ObjCProtocolDecl *objcProtocol) {
   auto clangProto =
       clang::CodeGen::emitObjCProtocolObject(getClangCGM(), objcProtocol);
-  updateProtocolRefs(*this, objcProtocol, clangProto);
+  // The GNUstep runtime merges protocol records by name when it loads them,
+  // so Clang's records for inherited protocols need no redirecting (and the
+  // rewrite below only understands the Apple runtime's record layout).
+  if (!Context.LangOpts.usesGNUstepObjCRuntime())
+    updateProtocolRefs(*this, objcProtocol, clangProto);
   return clangProto;
 }
 

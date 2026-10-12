@@ -2064,6 +2064,32 @@ namespace {
     ///
     /// This method does not return a value of a predictable type.
     llvm::Constant *buildProtocolList(llvm::GlobalValue::LinkageTypes linkage) {
+      // Under the GNUstep runtime:
+      //
+      // struct objc_protocol_list {
+      //   struct objc_protocol_list *next;
+      //   size_t count;
+      //   struct objc_protocol *list[count];
+      // };
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        if (Protocols.empty())
+          return null();
+
+        ConstantInitBuilder builder(IGM);
+        auto fields = builder.beginStruct();
+        fields.addNullPointer(IGM.PtrTy);
+        fields.addInt(IGM.SizeTy, Protocols.size());
+        auto array = fields.beginArray();
+        for (auto *protocol : Protocols)
+          buildProtocol(array, protocol);
+        array.finishAndAddTo(fields);
+        return buildGlobalVariable(
+            fields,
+            chooseNamePrefix("_PROTOCOLS_", "_CATEGORY_PROTOCOLS_",
+                             "_PROTOCOL_PROTOCOLS_"),
+            /*isConst*/ false, linkage);
+      }
+
       return buildOptionalList(
           Protocols, Size(0),
           chooseNamePrefix("_PROTOCOLS_", "_CATEGORY_PROTOCOLS_",
@@ -2867,8 +2893,11 @@ llvm::Constant *irgen::emitObjCProtocolData(IRGenModule &IGM,
   bool canUseClangEmission = deploymentAvailability.isContainedIn(
     IGM.Context.getSwift58Availability());
 
-  if (llvm::Triple(IGM.Module.getTargetTriple()).isOSDarwin() &&
-      canUseClangEmission) {
+  // Clang also emits the GNUstep runtime's protocol records, which the
+  // Swift protocol builder below does not know how to lay out.
+  if ((llvm::Triple(IGM.Module.getTargetTriple()).isOSDarwin() &&
+       canUseClangEmission) ||
+      IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
     // Use the clang to generate the protocol metadata if there is a clang node.
     if (auto clangDecl = proto->getClangDecl()) {
       if (auto objcMethodDecl = dyn_cast<clang::ObjCProtocolDecl>(clangDecl)) {
