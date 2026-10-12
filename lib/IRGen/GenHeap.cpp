@@ -2032,6 +2032,18 @@ static llvm::Value *emitLoadOfHeapMetadataRef(IRGenFunction &IGF,
   case IsaEncoding::ObjC: {
     // Feed the object pointer to object_getClass.
     llvm::Value *objcClass = emitLoadOfObjCHeapMetadataRef(IGF, object);
+    if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+      // Under the GNUstep runtime the isa of a Swift class with Objective-C
+      // ancestry is the class's GNUstep class record, not its Swift
+      // metadata, so map it before the caller reads Swift metadata fields
+      // such as the vtable.
+      objcClass = IGF.Builder.CreateBitCast(objcClass, IGF.IGM.ObjCClassPtrTy);
+      auto *metadata = IGF.Builder.CreateCall(
+          IGF.IGM.getGetObjCClassMetadataFunctionPointer(), objcClass);
+      metadata->setDoesNotThrow();
+      metadata->setDoesNotAccessMemory();
+      return metadata;
+    }
     objcClass = IGF.Builder.CreateBitCast(objcClass, IGF.IGM.TypeMetadataPtrTy);
     return objcClass;
   }
@@ -2114,8 +2126,14 @@ llvm::Value *irgen::
 emitHeapMetadataRefForUnknownHeapObject(IRGenFunction &IGF,
                                         llvm::Value *object) {
   object = IGF.Builder.CreateBitCast(object, IGF.IGM.ObjCPtrTy);
-  auto metadata = IGF.Builder.CreateCall(
-      IGF.IGM.getGetObjectClassFunctionPointer(), object);
+  // An instance of a Swift class that has no GNUstep class record points
+  // straight at its Swift metadata, which libobjc2's object_getClass() cannot
+  // read; the Swift runtime's replacement handles both kinds of class.
+  auto getObjectClass =
+      IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime()
+          ? IGF.IGM.getGNUstepGetObjectClassFunctionPointer()
+          : IGF.IGM.getGetObjectClassFunctionPointer();
+  auto metadata = IGF.Builder.CreateCall(getObjectClass, object);
   metadata->setName(object->getName() + ".Type");
   metadata->setCallingConv(IGF.IGM.getOptions().PlatformCCallingConvention);
   metadata->setDoesNotThrow();

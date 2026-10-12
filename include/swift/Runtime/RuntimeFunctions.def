@@ -2255,6 +2255,17 @@ FUNCTION(RegisterGNUstepObjCClassMetadata, Swift,
          EFFECT(RuntimeEffect::MetaData),
          UNKNOWN_MEMEFFECTS)
 
+// Class swift_gnustep_getObjectClass(id object);
+// object_getClass() for the GNUstep runtime, which also knows the class of an
+// instance of a Swift class that has no GNUstep class record.
+FUNCTION(GNUstepGetObjectClass, Swift, swift_gnustep_getObjectClass,
+         C_CC, AlwaysAvailable,
+         RETURNS(ObjCClassPtrTy),
+         ARGS(ObjCPtrTy),
+         ATTRS(NoUnwind, WillReturn),
+         EFFECT(RuntimeEffect::ObjectiveC),
+         MEMEFFECTS(ReadOnly))
+
 // void swift_objc_swift3ImplicitObjCEntrypoint(id self, SEL selector)
 FUNCTION(Swift3ImplicitObjCEntrypoint, Swift, swift_objc_swift3ImplicitObjCEntrypoint,
          C_CC, AlwaysAvailable,
