@@ -35,14 +35,31 @@ struct HeapObject;
 #include <objc/objc.h>
 #include <objc/runtime.h>
 #include <objc/objc-api.h>
+#if defined(__GNUSTEP_RUNTIME__)
+#include <objc/objc-arc.h>
+#endif
+
+// The GNUstep runtime's headers spell OBJC_EXPORT as OBJC_PUBLIC.
+#if !defined(OBJC_EXPORT) && defined(OBJC_PUBLIC)
+#define OBJC_EXPORT OBJC_PUBLIC
+#endif
 
 // Redeclare APIs from the Objective-C runtime.
 // These functions are not available through public headers, but are guaranteed
-// to exist on OS X >= 10.9 and iOS >= 7.0.
+// to exist on OS X >= 10.9 and iOS >= 7.0.  The GNUstep runtime declares them
+// in <objc/objc-arc.h>.
 
 OBJC_EXPORT id objc_retain(id);
 OBJC_EXPORT void objc_release(id);
+#if defined(__GNUSTEP_RUNTIME__)
+// The GNUstep runtime has no root autorelease entry point; autorelease the
+// object as the root class would.
+static inline id _objc_rootAutorelease(id object) {
+  return objc_autoreleaseReturnValue(object);
+}
+#else
 OBJC_EXPORT id _objc_rootAutorelease(id);
+#endif
 OBJC_EXPORT void objc_moveWeak(id*, id*);
 OBJC_EXPORT void objc_copyWeak(id*, id*);
 OBJC_EXPORT id objc_initWeak(id*, id);
@@ -64,12 +81,19 @@ typedef struct objc_image_info {
 // Returns nil if the superclass is nil and the class is not marked as a root.
 // Returns nil if the superclass is under construction.
 // Do not call objc_registerClassPair().
+// The GNUstep runtime has no such entry point; it registers classes when it
+// loads the image that defines them.
+#if !defined(__GNUSTEP_RUNTIME__)
 OBJC_EXPORT Class objc_readClassPair(Class cls,
                                      const struct objc_image_info *info)
     __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+#endif
 
-// Magic symbol whose _address_ is the runtime's isa mask.
+// Magic symbol whose _address_ is the runtime's isa mask.  The GNUstep
+// runtime never packs the isa.
+#if !defined(__GNUSTEP_RUNTIME__)
 OBJC_EXPORT const struct { char c; } objc_absolute_packed_isa_class_mask;
+#endif
 
 
 namespace swift {
