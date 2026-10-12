@@ -1691,6 +1691,33 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
       Args.hasFlag(OPT_enable_objc_interop, OPT_disable_objc_interop,
                    Target.isOSDarwin() && !Opts.hasFeature(Feature::Embedded));
 
+  if (const Arg *A = Args.getLastArg(OPT_objc_runtime_EQ)) {
+    auto runtime =
+        llvm::StringSwitch<std::optional<ObjCRuntimeKind>>(A->getValue())
+            .Case("apple", ObjCRuntimeKind::Apple)
+            .Case("gnustep", ObjCRuntimeKind::GNUstep)
+            .Default(std::nullopt);
+    if (!runtime) {
+      Diags.diagnose(SourceLoc(), diag::error_invalid_arg_value,
+                     A->getSpelling(), A->getValue());
+      return true;
+    }
+    // The GNUstep runtime is supported on Linux; Apple platforms always use
+    // Apple's runtime.
+    if (*runtime == ObjCRuntimeKind::GNUstep && !Target.isOSLinux()) {
+      Diags.diagnose(SourceLoc(), diag::error_unsupported_opt_for_target,
+                     A->getAsString(Args), Target.str());
+      return true;
+    }
+    if (*runtime != ObjCRuntimeKind::Apple && !Opts.EnableObjCInterop) {
+      Diags.diagnose(SourceLoc(),
+                     diag::error_objc_runtime_requires_objc_interop,
+                     A->getAsString(Args));
+      return true;
+    }
+    Opts.ObjCRuntime = *runtime;
+  }
+
   if (Args.hasArg(OPT_experimental_c_foreign_reference_types))
     Diags.diagnose(SourceLoc(), diag::warn_flag_deprecated,
                    "-experimental-c-foreign-reference-types");

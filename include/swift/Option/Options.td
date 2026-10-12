@@ -922,6 +922,13 @@ def cxx_interoperability_mode :
          SwiftSynthesizeInterfaceOption]>,
   HelpText<"Enables C++ interoperability; pass 'default' to enable or 'off' to disable">;
 
+def objc_runtime_EQ :
+  Joined<["-"], "objc-runtime=">,
+  Flags<[FrontendOption, ModuleInterfaceOption, HelpHidden]>,
+  MetaVarName<"<runtime>">,
+  HelpText<"Objective-C runtime that Objective-C interop targets: "
+           "'apple' (the default) or 'gnustep'">;
+
 def experimental_c_foreign_reference_types :
   Flag<["-"], "experimental-c-foreign-reference-types">,
   Flags<[FrontendOption, HelpHidden, ModuleInterfaceOption]>,

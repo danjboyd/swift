@@ -87,6 +87,10 @@ WARNING(warning_inferred_simulator_target,none,
 ERROR(error_argument_not_allowed_with, none,
       "argument '%0' is not allowed with '%1'", (StringRef, StringRef))
 
+ERROR(error_objc_runtime_requires_objc_interop, none,
+      "'%0' requires Objective-C interop; pass '-enable-objc-interop'",
+      (StringRef))
+
 ERROR(error_option_requires_sanitizer, none,
       "option '%0' requires a sanitizer to be enabled. Use -sanitize= to "
       "enable a sanitizer", (StringRef))

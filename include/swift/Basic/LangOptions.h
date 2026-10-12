@@ -128,6 +128,14 @@ namespace swift {
     Complete,
   };
 
+  /// The Objective-C runtimes that Objective-C interop can target.
+  enum class ObjCRuntimeKind : uint8_t {
+    /// Apple's Objective-C runtime.
+    Apple,
+    /// The GNUstep Objective-C runtime (libobjc2), with its gnustep-2.0 ABI.
+    GNUstep,
+  };
+
   /// A collection of options that affect the language dialect and
   /// provide compiler debugging facilities.
   class LangOptions final {
@@ -327,6 +335,9 @@ namespace swift {
     /// Enable Objective-C Runtime interop code generation and build
     /// configuration options.
     bool EnableObjCInterop = true;
+
+    /// The Objective-C runtime that Objective-C interop targets.
+    ObjCRuntimeKind ObjCRuntime = ObjCRuntimeKind::Apple;
 
     /// Enable C++ interop code generation and build configuration
     /// options. Disabled by default because there is no way to control the
@@ -891,6 +902,12 @@ namespace swift {
     FeatureStateStorage featureStates;
 
   public:
+    /// Whether Objective-C interop is enabled and targets the GNUstep
+    /// Objective-C runtime.
+    bool usesGNUstepObjCRuntime() const {
+      return EnableObjCInterop && ObjCRuntime == ObjCRuntimeKind::GNUstep;
+    }
+
     /// Retrieve the state of the given feature.
     FeatureState getFeatureState(Feature feature) const;
 
