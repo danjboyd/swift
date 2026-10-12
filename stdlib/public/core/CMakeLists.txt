@@ -311,6 +311,14 @@ elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "FREEBSD")
   find_library(EXECINFO_LIBRARY execinfo)
   list(APPEND swift_core_private_link_libraries ${EXECINFO_LIBRARY})
 elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "LINUX")
+  if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
+    # The GNUstep Objective-C runtime and Foundation (gnustep-base).
+    find_library(SWIFT_GNUSTEP_OBJC_LIBRARY NAMES objc REQUIRED)
+    find_library(SWIFT_GNUSTEP_BASE_LIBRARY NAMES gnustep-base REQUIRED)
+    list(APPEND swift_core_private_link_libraries
+      ${SWIFT_GNUSTEP_OBJC_LIBRARY}
+      ${SWIFT_GNUSTEP_BASE_LIBRARY})
+  endif()
   if(SWIFT_BUILD_STATIC_STDLIB)
     list(APPEND swift_core_private_link_libraries)
   endif()

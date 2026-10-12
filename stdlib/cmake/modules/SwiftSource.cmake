@@ -626,8 +626,15 @@ function(_compile_swift_files
     list(APPEND swift_flags "-Xfrontend" "-disable-standard-substitutions-in-reflection-mangling")
   endif()
 
-  if(NOT SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
+  if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
+    list(APPEND swift_flags "-Xfrontend" "-enable-objc-interop")
+  else()
     list(APPEND swift_flags "-Xfrontend" "-disable-objc-interop")
+  endif()
+
+  # Objective-C interop off Apple platforms means the GNUstep runtime.
+  if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP AND NOT APPLE)
+    list(APPEND swift_flags "-Xfrontend" "-objc-runtime=gnustep")
   endif()
 
   if(SWIFT_STDLIB_EXPERIMENTAL_HERMETIC_SEAL_AT_LINK)
