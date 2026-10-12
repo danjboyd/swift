@@ -279,6 +279,16 @@ SwiftTargetInfo SwiftTargetInfo::get(IRGenModule &IGM) {
     break;
   }
 
+  // The GNUstep Objective-C runtime (libobjc2) does not pack the isa, and the
+  // Swift runtime does not export swift_isaMask for it, so isa loads must not
+  // be masked.  It does insert hidden classes into an object's isa (for
+  // example when an associated object is set), so an object's class must
+  // come from object_getClass().
+  if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+    target.ObjCUseISAMask = false;
+    target.ObjCHasOpaqueISAs = true;
+  }
+
   if (IGM.getOptions().CustomLeastValidPointerValue != 0)
     target.LeastValidPointerValue = IGM.getOptions().CustomLeastValidPointerValue;
 
