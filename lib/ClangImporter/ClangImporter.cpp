@@ -389,9 +389,10 @@ public:
 
   bool sawDependency(StringRef Filename, bool FromClangModule,
                      bool IsSystem, bool IsClangModuleFile,
-                     bool IsMissing) override {
+                     bool IsDirectModuleImport, bool IsMissing) override {
     if (!clang::DependencyCollector::sawDependency(Filename, FromClangModule,
                                                    IsSystem, IsClangModuleFile,
+                                                   IsDirectModuleImport,
                                                    IsMissing))
       return false;
     // Currently preserving older ClangImporter behavior of ignoring .pcm
@@ -404,11 +405,13 @@ public:
   }
 
   void maybeAddDependency(StringRef Filename, bool FromModule, bool IsSystem,
-                          bool IsModuleFile, bool IsMissing) override {
+                          bool IsModuleFile, bool IsDirectModuleImport,
+                          bool IsMissing) override {
     if (FileCollector)
       FileCollector->addFile(Filename);
     clang::DependencyCollector::maybeAddDependency(
-        Filename, FromModule, IsSystem, IsModuleFile, IsMissing);
+        Filename, FromModule, IsSystem, IsModuleFile, IsDirectModuleImport,
+        IsMissing);
   }
 };
 } // end anonymous namespace
