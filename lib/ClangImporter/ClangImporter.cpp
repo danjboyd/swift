@@ -558,10 +558,14 @@ void importer::getNormalInvocationArguments(
 
   if (LangOpts.EnableObjCInterop) {
     invocationArgStrs.insert(invocationArgStrs.end(), {"-fobjc-arc"});
-    // TODO: Investigate whether 7.0 is a suitable default version.
-    if (!triple.isOSDarwin())
+    if (LangOpts.usesGNUstepObjCRuntime()) {
+      invocationArgStrs.insert(invocationArgStrs.end(),
+                               {"-fobjc-runtime=gnustep-2.0"});
+    } else if (!triple.isOSDarwin()) {
+      // TODO: Investigate whether 7.0 is a suitable default version.
       invocationArgStrs.insert(invocationArgStrs.end(),
                                {"-fobjc-runtime=ios-7.0"});
+    }
 
     invocationArgStrs.insert(invocationArgStrs.end(), {
       "-x", EnableCXXInterop ? "objective-c++" : "objective-c",
