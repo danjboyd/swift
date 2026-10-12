@@ -715,6 +715,7 @@ std::string IRGenModule::getObjCSelectorName(SILDeclRef method) {
 }
 
 static llvm::Value *emitSuperArgument(IRGenFunction &IGF,
+                                      ObjCMessageKind kind,
                                       bool isInstanceMethod,
                                       llvm::Value *selfValue,
                                       CanType searchClass) {
@@ -725,6 +726,23 @@ static llvm::Value *emitSuperArgument(IRGenFunction &IGF,
   // TODO: Track lifetime markers for function args.
   llvm::Value *self = IGF.Builder.CreateBitCast(selfValue,
                                                 IGF.IGM.ObjCPtrTy);
+
+  // objc_msgSendSuper2 takes the current class and starts the lookup at its
+  // superclass.  The GNUstep runtime's objc_msg_lookup_super takes the class
+  // to start the lookup at.
+  if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime() &&
+      kind == ObjCMessageKind::Super) {
+    CanType superclass;
+    if (isInstanceMethod) {
+      superclass = getSuperclassForMetadata(IGF.IGM, searchClass);
+    } else {
+      superclass = getSuperclassForMetadata(
+          IGF.IGM, cast<MetatypeType>(searchClass).getInstanceType());
+    }
+
+    if (superclass)
+      searchClass = superclass;
+  }
   
   // Generate the search class object reference.
   llvm::Value *searchValue;
@@ -733,6 +751,11 @@ static llvm::Value *emitSuperArgument(IRGenFunction &IGF,
                                            MetadataValueType::ObjCClass,
                                            MetadataState::Complete,
                                            /*allow uninitialized*/ true);
+    // The GNUstep runtime knows the class record, not the Swift metadata.
+    if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+      searchValue = IGF.Builder.CreateCall(
+          IGF.IGM.getGetObjCClassFromMetadataFunctionPointer(), searchValue);
+    }
   } else {
     searchClass = cast<MetatypeType>(searchClass).getInstanceType();
     ClassDecl *searchClassDecl = searchClass.getClassOrBoundGenericClass();
@@ -801,13 +824,21 @@ Callee irgen::getObjCMethodCallee(IRGenFunction &IGF,
   Signature sig = IGF.IGM.getSignature(info.OrigFnType);
   bool indirectResult =
     sig.getForeignInfo().ClangInfo->getReturnInfo().isIndirect();
-  if (kind != ObjCMessageKind::Normal) {
+  // The GNUstep runtime has no objc_msgSendSuper; look the method up with
+  // objc_msg_lookup_super and call it directly.
+  bool useGNUstepSuperLookup =
+      kind != ObjCMessageKind::Normal &&
+      IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime();
+  if (kind != ObjCMessageKind::Normal && !useGNUstepSuperLookup) {
     sig.setType(getMsgSendSuperTy(IGF.IGM, sig.getType(), indirectResult));
   }
 
   // Create the appropriate messenger function.
   // FIXME: this needs to be target-specific.  Ask Clang for it!
   llvm::Constant *messenger = [&]() -> llvm::Constant* {
+    if (useGNUstepSuperLookup)
+      return nullptr;
+
     if (indirectResult && IGF.IGM.TargetInfo.ObjCUseStret) {
       switch (kind) {
       case ObjCMessageKind::Normal:
@@ -835,7 +866,8 @@ Callee irgen::getObjCMethodCallee(IRGenFunction &IGF,
     }
   }();
 
-  messenger = llvm::ConstantExpr::getBitCast(messenger, IGF.IGM.PtrTy);
+  if (messenger)
+    messenger = llvm::ConstantExpr::getBitCast(messenger, IGF.IGM.PtrTy);
 
   // super.constructor references an instance method (even though the
   // decl is really a 'static' member). Similarly, destructors refer
@@ -848,7 +880,7 @@ Callee irgen::getObjCMethodCallee(IRGenFunction &IGF,
   llvm::Value *receiverValue;
   if (auto searchType = methodInfo.getSearchType()) {
     receiverValue =
-      emitSuperArgument(IGF, isInstanceMethod, selfValue,
+      emitSuperArgument(IGF, kind, isInstanceMethod, selfValue,
                         searchType.getASTType());
   } else {
     receiverValue = selfValue;
@@ -857,6 +889,18 @@ Callee irgen::getObjCMethodCallee(IRGenFunction &IGF,
   // Compute the selector.
   Selector selector(method);
   llvm::Value *selectorValue = IGF.emitObjCSelectorRefLoad(selector.str());
+
+  if (useGNUstepSuperLookup) {
+    llvm::Value *lookup = IGF.Builder.CreateCall(
+        IGF.IGM.getObjCMsgLookupSuperFnType(),
+        IGF.IGM.getObjCMsgLookupSuperFn(),
+        {receiverValue, selectorValue});
+    lookup = IGF.Builder.CreateBitCast(lookup, IGF.IGM.PtrTy);
+    auto fn = FunctionPointer::createUnsigned(FunctionPointer::Kind::Function,
+                                              lookup, sig,
+                                              /*useSignature*/ true);
+    return Callee(std::move(info), fn, selfValue, selectorValue);
+  }
 
   auto fn =
       FunctionPointer::forDirect(FunctionPointer::Kind::Function, messenger,
@@ -878,6 +922,12 @@ llvm::Value *irgen::emitObjCAllocObjectCall(IRGenFunction &IGF,
   // Get an appropriately-cast function pointer.
   auto fn = IGF.IGM.getObjCAllocWithZoneFn();
   auto fnType = IGF.IGM.getObjCAllocWithZoneFnType();
+
+  // Allocate an instance of the class record the GNUstep runtime knows.
+  if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+    self = IGF.Builder.CreateCall(
+        IGF.IGM.getGetObjCClassFromMetadataFunctionPointer(), self);
+  }
 
   if (self->getType() != IGF.IGM.ObjCClassPtrTy) {
     fnType = llvm::FunctionType::get(self->getType(), self->getType(), false);

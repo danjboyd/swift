@@ -7107,6 +7107,14 @@ void irgen::emitSpecializedGenericEnumMetadata(IRGenModule &IGM, CanType type,
 }
 
 llvm::Value *IRGenFunction::emitObjCSelectorRefLoad(StringRef selector) {
+  // The GNUstep runtime does not fix up Apple's selector references; ask it
+  // for the selector.
+  if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+    auto *selectorName = IGM.getAddrOfObjCMethodName(selector);
+    return Builder.CreateCall(IGM.getObjCSelRegisterNameFunctionPointer(),
+                              selectorName);
+  }
+
   llvm::Constant *loadSelRef = IGM.getAddrOfObjCSelectorRef(selector);
   llvm::Value *loadSel = Builder.CreateLoad(
       Address(loadSelRef, IGM.Int8PtrTy, IGM.getPointerAlignment()));
