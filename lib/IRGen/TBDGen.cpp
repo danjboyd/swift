@@ -669,10 +669,20 @@ std::vector<std::string>
 PublicSymbolsRequest::evaluate(Evaluator &evaluator,
                                TBDGenDescriptor desc) const {
   std::vector<std::string> symbols;
+  bool gnustepObjCRuntime = desc.getParentModule()
+                                ->getASTContext()
+                                .LangOpts.usesGNUstepObjCRuntime();
   auto addSymbol = [&](StringRef symbol, EncodeKind kind, SymbolSource source,
                        Decl *decl, SymbolFlags flags) {
     if (kind == EncodeKind::GlobalSymbol)
       symbols.push_back(symbol.str());
+    // GNUstep runtime class symbols use the prefixes Clang uses for the
+    // gnustep-2.0 ABI; the class reference is public as well.
+    else if (kind == EncodeKind::ObjectiveCClass && gnustepObjCRuntime) {
+      symbols.push_back(("._OBJC_CLASS_" + symbol).str());
+      symbols.push_back(("._OBJC_METACLASS_" + symbol).str());
+      symbols.push_back(("._OBJC_REF_CLASS_" + symbol).str());
+    }
     // TextAPI ObjC Class Kinds represents two symbols.
     else if (kind == EncodeKind::ObjectiveCClass) {
       symbols.push_back((llvm::MachO::ObjC2ClassNamePrefix + symbol).str());
