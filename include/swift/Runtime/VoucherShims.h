@@ -33,8 +33,12 @@
 // same Job twice without restoring it.
 #define SWIFT_DEAD_VOUCHER ((voucher_t)-1)
 
-// The OS has voucher support if it has the header or if it has ObjC interop.
-#if (SWIFT_HAS_VOUCHER_HEADER || SWIFT_OBJC_INTEROP) && !SWIFT_THREADING_NONE
+// The OS has voucher support if it has the header or if it is Darwin with
+// ObjC interop.  ObjC interop alone does not imply vouchers: the GNUstep
+// runtime on Linux has ObjC interop and a libdispatch without them.
+#if (SWIFT_HAS_VOUCHER_HEADER ||                                              \
+     (SWIFT_OBJC_INTEROP && defined(__APPLE__))) &&                           \
+    !SWIFT_THREADING_NONE
 #define SWIFT_HAS_VOUCHERS 1
 #endif
 
