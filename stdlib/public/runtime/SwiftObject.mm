@@ -1396,6 +1396,7 @@ static bool checkObjCSupportsLazyRealization() {
 }
 #endif
 
+#if !defined(__GNUSTEP_RUNTIME__)
 // Check whether the current ObjC runtime supports lazy realization. If it does,
 // then we can avoid forcing realization of classes before we use them.
 static bool objcSupportsLazyRealization() {
@@ -1405,8 +1406,15 @@ static bool objcSupportsLazyRealization() {
   return false;
 #endif
 }
+#endif
 
 void swift::swift_instantiateObjCClass(const ClassMetadata *_c) {
+#if defined(__GNUSTEP_RUNTIME__)
+  // The GNUstep runtime registers the class records the compiler emits when
+  // it loads the image that defines them; Swift metadata is not a class it
+  // can register.
+  (void)_c;
+#else
   static const objc_image_info ImageInfo = {0, 0};
 
   Class c = class_const_cast(_c);
@@ -1421,9 +1429,11 @@ void swift::swift_instantiateObjCClass(const ClassMetadata *_c) {
   assert(registered == c
          && "objc_readClassPair failed to instantiate the class in-place");
   (void)registered;
+#endif
 }
 
 Class swift::swift_getInitializedObjCClass(Class c) {
+#if !defined(__GNUSTEP_RUNTIME__)
   if (!objcSupportsLazyRealization()) {
     // Used when we have class metadata and we want to ensure a class has been
     // initialized by the Objective-C runtime. We need to do this because the
@@ -1434,6 +1444,7 @@ Class swift::swift_getInitializedObjCClass(Class c) {
     // https://github.com/apple/swift/issues/52863 for an example.
     [c self];
   }
+#endif
   return c;
 }
 

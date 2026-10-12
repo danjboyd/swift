@@ -876,7 +876,12 @@ void swift::swift_deallocClassInstance(HeapObject *object,
 #endif
 
   if (!fastDeallocSupported || !object->refCounts.getPureSwiftDeallocation()) {
+#if defined(__GNUSTEP_RUNTIME__)
+    objc_removeAssociatedObjects((id)object);
+    (void)objc_delete_weak_refs((id)object);
+#else
     objc_destructInstance((id)object);
+#endif
   }
 #endif
 
