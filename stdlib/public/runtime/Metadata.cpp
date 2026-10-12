@@ -438,8 +438,11 @@ template <> bool Metadata::isStaticallySpecializedGenericMetadata() const {
     return metadata->isStaticallySpecializedGenericMetadata();
   if (auto *metadata = dyn_cast<EnumMetadata>(this))
     return metadata->isStaticallySpecializedGenericMetadata();
-  if (auto *metadata = dyn_cast<ClassMetadata>(this))
+  if (auto *metadata = dyn_cast<ClassMetadata>(this)) {
+    if (!metadata->isTypeMetadata())
+      return false;
     return metadata->isStaticallySpecializedGenericMetadata();
+  }
 
   return false;
 }
@@ -449,8 +452,11 @@ template <> const TypeContextDescriptor *Metadata::getDescription() const {
     return metadata->getDescription();
   if (auto *metadata = dyn_cast<EnumMetadata>(this))
     return metadata->getDescription();
-  if (auto *metadata = dyn_cast<ClassMetadata>(this))
+  if (auto *metadata = dyn_cast<ClassMetadata>(this)) {
+    if (!metadata->isTypeMetadata())
+      return nullptr;
     return metadata->getDescription();
+  }
 
   return nullptr;
 }
@@ -461,8 +467,11 @@ bool Metadata::isCanonicalStaticallySpecializedGenericMetadata() const {
     return metadata->isCanonicalStaticallySpecializedGenericMetadata();
   if (auto *metadata = dyn_cast<EnumMetadata>(this))
     return metadata->isCanonicalStaticallySpecializedGenericMetadata();
-  if (auto *metadata = dyn_cast<ClassMetadata>(this))
+  if (auto *metadata = dyn_cast<ClassMetadata>(this)) {
+    if (!metadata->isTypeMetadata())
+      return false;
     return metadata->isCanonicalStaticallySpecializedGenericMetadata();
+  }
 
   return false;
 }
@@ -741,8 +750,14 @@ _cacheCanonicalSpecializedMetadata(const TypeContextDescriptor *description) {
       auto *canonicalMetadataAccessor = canonicalMetadataAccessorPtr.get();
       auto response = canonicalMetadataAccessor(request);
       auto *canonicalMetadata = response.Value;
+      if (!request.isSatisfiedBy(response.State) || canonicalMetadata == nullptr)
+        continue;
+
       const void *const *arguments =
           reinterpret_cast<const void *const *>(canonicalMetadata->getGenericArgs());
+      if (arguments == nullptr)
+        continue;
+
       auto key = MetadataCacheKey(cache.SigLayout, arguments);
       auto result = cache.getOrInsert(key, MetadataRequest(MetadataState::Complete, /*isNonBlocking*/true), canonicalMetadata);
       (void)result;
@@ -752,8 +767,14 @@ _cacheCanonicalSpecializedMetadata(const TypeContextDescriptor *description) {
     auto canonicalMetadatas = description->getCanonicalMetadataPrespecializations();
     for (auto &canonicalMetadataPtr : canonicalMetadatas) {
       Metadata *canonicalMetadata = canonicalMetadataPtr.get();
+      if (canonicalMetadata == nullptr)
+        continue;
+
       const void *const *arguments =
           reinterpret_cast<const void *const *>(canonicalMetadata->getGenericArgs());
+      if (arguments == nullptr)
+        continue;
+
       auto key = MetadataCacheKey(cache.SigLayout, arguments);
       auto result = cache.getOrInsert(key, MetadataRequest(MetadataState::Complete, /*isNonBlocking*/true), canonicalMetadata);
       (void)result;
@@ -6834,7 +6855,7 @@ getNondependentWitnessTable(const ProtocolConformanceDescriptor *conformance,
                                          SWIFT_MEMORY_ORDER_CONSUME)) {
     // Someone beat us to the punch. Throw away our table and return the
     // existing one.
-    allocator.Deallocate(buffer);
+    allocator.Deallocate(buffer, tableSize, alignof(void *));
     return orig;
   }
   
@@ -7771,6 +7792,8 @@ static Result performOnMetadataCache(const Metadata *metadata,
   // Handle different kinds of type that can delay their metadata.
   const TypeContextDescriptor *description;
   if (auto classMetadata = dyn_cast<ClassMetadata>(metadata)) {
+    if (!classMetadata->isTypeMetadata())
+      return std::move(callbacks).forOtherMetadata(metadata);
     description = classMetadata->getDescription();
   } else if (auto valueMetadata = dyn_cast<ValueMetadata>(metadata)) {
     description = valueMetadata->getDescription();
@@ -7857,6 +7880,8 @@ static bool findAnyTransitiveMetadata(const Metadata *type, T &&predicate) {
   // Classes require their superclass to be transitively complete,
   // and they can be generic.
   if (auto classType = dyn_cast<ClassMetadata>(type)) {
+    if (!classType->isTypeMetadata())
+      return false;
     description = classType->getDescription();
     if (auto super = classType->Superclass) {
       if (super->isTypeMetadata() && predicate(super))
@@ -8504,6 +8529,15 @@ void *MetadataAllocator::Allocate(size_t size, size_t alignment) {
 
 void MetadataAllocator::Deallocate(const void *allocation, size_t size,
                                    size_t Alignment) {
+#if defined(__GNUSTEP_RUNTIME__)
+  // GNUstep interop bring-up still hits metadata-pool rollback corruption in
+  // speculative / loser allocation paths. Leak pooled metadata allocations for
+  // now rather than rewinding the shared arena over stale bytes.
+  if (size <= PoolRange::MaxPoolAllocationSize) {
+    return;
+  }
+#endif
+
   __asan_poison_memory_region(allocation, size);
 
   if (size > PoolRange::MaxPoolAllocationSize) {

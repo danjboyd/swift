@@ -583,6 +583,16 @@ STANDARD_OBJC_METHOD_IMPLS_FOR_SWIFT_OBJECTS
 /// reference-counting.
 bool swift::usesNativeSwiftReferenceCounting(const ClassMetadata *theClass) {
 #if SWIFT_OBJC_INTEROP
+#if defined(__GNUSTEP_RUNTIME__)
+  // GNUstep ObjC interop can coexist with pure Swift class metadata that is
+  // not also an ObjC class object. Those records carry the direct metadata
+  // kind word instead of the ObjC-compatible isa/Data layout, so isTypeMetadata()
+  // would otherwise misclassify them as ObjC classes and route releases through
+  // objc_release.
+  auto rawKind = *reinterpret_cast<const uintptr_t *>(theClass);
+  if (rawKind == static_cast<uintptr_t>(MetadataKind::Class))
+    return true;
+#endif
   if (!theClass->isTypeMetadata()) return false;
   return (theClass->getFlags() & ClassFlags::UsesSwiftRefcounting);
 #else
@@ -1754,10 +1764,16 @@ ClassExtents
 _swift_getSwiftClassInstanceExtents(const Metadata *c) {
   assert(c && c->isClassObject());
   auto metaData = c->getClassObject();
-  return ClassExtents{
-    metaData->getInstanceAddressPoint(),
-    metaData->getInstanceSize() - metaData->getInstanceAddressPoint()
-  };
+#if defined(__GNUSTEP_RUNTIME__)
+  if (!metaData->isTypeMetadata()) {
+    auto negative = size_t(metaData->InstanceAddressPoint);
+    auto positive = size_t(metaData->InstanceSize) - negative;
+    return ClassExtents{negative, positive};
+  }
+#endif
+  auto negative = metaData->getInstanceAddressPoint();
+  auto positive = metaData->getInstanceSize() - metaData->getInstanceAddressPoint();
+  return ClassExtents{negative, positive};
 }
 
 #if SWIFT_OBJC_INTEROP
