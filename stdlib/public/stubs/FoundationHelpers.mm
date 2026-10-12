@@ -23,6 +23,7 @@
 #include "swift/shims/CoreFoundationShims.h"
 #import <objc/runtime.h>
 #include "swift/Runtime/Once.h"
+#include <cassert>
 #include <dlfcn.h>
 
 typedef enum {

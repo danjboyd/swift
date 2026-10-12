@@ -1365,7 +1365,8 @@ static id bridgeAnythingNonVerbatimToObjectiveC(OpaqueValue *src,
         // Though they're statically-allocated globals, Protocol inherits
         // NSObject's default refcounting behavior so must be retained.
         auto protocolObj = existential->getProtocols()[0].getObjCProtocol();
-        return objc_retain(protocolObj);
+        return objc_retain(reinterpret_cast<id>(
+            const_cast<Protocol *>(protocolObj)));
       }
     }
   }

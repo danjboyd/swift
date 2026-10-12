@@ -60,7 +60,9 @@
 #if SWIFT_OBJC_INTEROP
 # import <CoreFoundation/CFBase.h> // for CFTypeID
 # import <Foundation/Foundation.h>
-# include <malloc/malloc.h>
+# if __has_include(<malloc/malloc.h>)
+#  include <malloc/malloc.h>
+# endif
 # include <dispatch/dispatch.h>
 #endif
 
@@ -263,8 +265,13 @@ static id _getClassDescription(Class cls) {
 }
 
 - (struct _NSZone *)zone {
+#if __has_include(<malloc/malloc.h>)
   auto zone = malloc_zone_from_ptr(self);
   return (struct _NSZone *)(zone ? zone : malloc_default_zone());
+#else
+  (void)self;
+  return nullptr;
+#endif
 }
 
 - (void)doesNotRecognizeSelector: (SEL) sel {
