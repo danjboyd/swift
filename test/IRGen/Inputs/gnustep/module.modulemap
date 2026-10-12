@@ -1,0 +1,4 @@
+module GNUstepRoot {
+  header "Root.h"
+  export *
+}
