@@ -1244,6 +1244,77 @@ ManagedValue SILGenFunction::emitBridgedToNativeValue(SILLocation loc,
       /*bridgedOptionalsToUnwrap=*/0, isCallResult, C);
 }
 
+/// Under the GNUstep runtime without the Foundation overlay, call the
+/// standard library's _swift_gnustep_missingNSErrorToError() for an
+/// Objective-C failure that produced no NSError.
+static ManagedValue emitGNUstepMissingNSErrorToError(SILGenFunction &SGF,
+                                                     SILLocation loc) {
+  auto nativeErrorTy = SILType::getExceptionType(SGF.getASTContext());
+  SILGenFunctionBuilder builder(SGF.SGM);
+  std::array<SILResultInfo, 1> results = {
+      SILResultInfo(nativeErrorTy.getASTType(), ResultConvention::Owned)};
+  auto fnTy = SILFunctionType::get(
+      nullptr, SILFunctionType::ExtInfo::getThin(), SILCoroutineKind::None,
+      ParameterConvention::Direct_Unowned, /*params*/ {}, /*yields*/ {},
+      results, /*error result*/ std::nullopt, SubstitutionMap(),
+      SubstitutionMap(), SGF.getASTContext());
+  auto missingErrorFn = builder.getOrCreateFunction(
+      loc, "_swift_gnustep_missingNSErrorToError", SILLinkage::PublicExternal,
+      fnTy, IsNotBare, IsNotTransparent, IsNotSerialized, IsNotDynamic,
+      IsNotDistributed, IsNotRuntimeAccessible);
+  auto missingErrorRef = SGF.B.createFunctionRef(loc, missingErrorFn);
+  SILValue nativeError = SGF.B.createApply(loc, missingErrorRef, {}, {});
+  return SGF.emitManagedRValueWithCleanup(nativeError);
+}
+
+/// Under the GNUstep runtime without the Foundation overlay, wrap an NSError
+/// in an Error with the standard library's _swift_gnustep_nserrorToError().
+static ManagedValue emitGNUstepNSErrorToError(SILGenFunction &SGF,
+                                              SILLocation loc,
+                                              ManagedValue nsError) {
+  auto nativeErrorTy = SILType::getExceptionType(SGF.getASTContext());
+  auto anyObjectTy = SGF.getASTContext().getAnyObjectType();
+  SILType loweredAnyObjectTy =
+      SGF.getTypeLowering(anyObjectTy).getLoweredType();
+  auto conformances = collectExistentialConformances(
+      nsError.getType().getASTType()->getCanonicalType(), anyObjectTy);
+  auto anyObject = SGF.B.createInitExistentialRef(
+      loc, loweredAnyObjectTy, nsError.getType().getASTType(), nsError,
+      conformances);
+
+  SILGenFunctionBuilder builder(SGF.SGM);
+  SILParameterInfo params[] = {
+      SILParameterInfo(anyObjectTy, ParameterConvention::Direct_Guaranteed)};
+  std::array<SILResultInfo, 1> results = {
+      SILResultInfo(nativeErrorTy.getASTType(), ResultConvention::Owned)};
+  auto fnTy = SILFunctionType::get(
+      nullptr, SILFunctionType::ExtInfo::getThin(), SILCoroutineKind::None,
+      ParameterConvention::Direct_Unowned, params, /*yields*/ {}, results,
+      /*error result*/ std::nullopt, SubstitutionMap(), SubstitutionMap(),
+      SGF.getASTContext());
+  auto nsErrorToErrorFn = builder.getOrCreateFunction(
+      loc, "_swift_gnustep_nserrorToError", SILLinkage::PublicExternal, fnTy,
+      IsNotBare, IsNotTransparent, IsNotSerialized, IsNotDynamic,
+      IsNotDistributed, IsNotRuntimeAccessible);
+  auto nsErrorToErrorRef = SGF.B.createFunctionRef(loc, nsErrorToErrorFn);
+  SILValue nativeError = SGF.B.createApply(loc, nsErrorToErrorRef, {},
+                                           {anyObject.getValue()});
+  return SGF.emitManagedRValueWithCleanup(nativeError);
+}
+
+/// Whether the GNUstep Foundation overlay provides _convertNSErrorToError.
+/// Without the overlay, Foundation is only a Clang module.
+static bool hasGNUstepFoundationErrorBridging(SILGenFunction &SGF) {
+  auto &ctx = SGF.getASTContext();
+  auto *foundation = ctx.getLoadedModule(ctx.Id_Foundation);
+  if (!foundation)
+    return false;
+  SmallVector<ValueDecl *, 1> decls;
+  foundation->lookupValue(ctx.getIdentifier("_convertNSErrorToError"),
+                          NLKind::QualifiedLookup, decls);
+  return !decls.empty();
+}
+
 /// Bridge a possibly-optional foreign error type to Error.
 ManagedValue SILGenFunction::emitBridgedToNativeError(SILLocation loc,
                                                   ManagedValue bridgedError) {
@@ -1253,8 +1324,11 @@ ManagedValue SILGenFunction::emitBridgedToNativeError(SILLocation loc,
     auto nativeErrorTy = SILType::getExceptionType(getASTContext());
 
     auto conformance = SGM.getNSErrorConformanceToError();
-    if (!conformance)
+    if (!conformance) {
+      if (getASTContext().LangOpts.usesGNUstepObjCRuntime())
+        return emitGNUstepNSErrorToError(*this, loc, bridgedError);
       return emitUndef(nativeErrorTy);
+    }
     ProtocolConformanceRef conformanceArray[] = {
       ProtocolConformanceRef(conformance)
     };
@@ -1264,8 +1338,46 @@ ManagedValue SILGenFunction::emitBridgedToNativeError(SILLocation loc,
                                       bridgedError, conformances);
   }
 
-  // Otherwise, we need to call a runtime function to potential substitute
-  // a standard error for a nil NSError.
+  // Otherwise, we need to call a runtime function to potentially substitute
+  // a standard error for a nil NSError.  Under GNUstep without the Foundation
+  // overlay, Foundation is only a Clang module and has no such function, so
+  // erase a non-nil NSError directly and use a small Swift stdlib helper for
+  // the nil edge.  With the overlay, call its _convertNSErrorToError as on
+  // Apple platforms, so that an NSError standing for a Swift error gives back
+  // that Swift error.
+  if (getASTContext().LangOpts.usesGNUstepObjCRuntime() &&
+      !hasGNUstepFoundationErrorBridging(*this)) {
+    auto nativeErrorTy = SILType::getExceptionType(getASTContext());
+    auto contBB = createBasicBlock();
+    auto someBB = createBasicBlock();
+    auto noneBB = createBasicBlock();
+
+    std::pair<EnumElementDecl *, SILBasicBlock *> cases[] = {
+      {getASTContext().getOptionalSomeDecl(), someBB},
+      {getASTContext().getOptionalNoneDecl(), noneBB}
+    };
+    auto *switchEnum = B.createSwitchEnum(loc, bridgedError.forward(*this),
+                                          /*default*/ nullptr, cases);
+
+    B.emitBlock(someBB);
+    SILValue branchArg;
+    {
+      FullExpr presentScope(Cleanups, CleanupLocation(loc));
+      auto nsError = B.createOptionalSomeResult(switchEnum);
+      branchArg = emitBridgedToNativeError(loc, nsError).forward(*this);
+    }
+    B.createBranch(loc, contBB, branchArg);
+
+    B.emitBlock(noneBB);
+    branchArg = emitGNUstepMissingNSErrorToError(*this, loc).forward(*this);
+    B.createBranch(loc, contBB, branchArg);
+
+    B.emitBlock(contBB);
+    SILValue nativeError = contBB->createPhiArgument(nativeErrorTy,
+                                                     OwnershipKind::Owned);
+    return emitManagedRValueWithCleanup(nativeError);
+  }
+
   auto bridgeFn = emitGlobalFunctionRef(loc, SGM.getNSErrorToErrorFn());
   auto bridgeFnType = bridgeFn->getType().castTo<SILFunctionType>();
   assert(bridgeFnType->getNumResults() == 1);
