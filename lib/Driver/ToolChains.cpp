@@ -202,12 +202,18 @@ void ToolChain::addCommonFrontendArgs(const OutputInfo &OI,
     arguments.push_back("-aarch64-use-tbi");
   }
 
+  // The gnustep-swift project's -gnustep-objc-interop stands for
+  // -enable-objc-interop -objc-runtime=gnustep.
+  bool gnustepObjCInterop =
+      inputArgs.hasArg(options::OPT_gnustep_objc_interop);
+
   // Enable or disable ObjC interop appropriately for the platform
-  if (Triple.isOSDarwin() &&
-      !containsValue(
-          inputArgs
-            .getAllArgValues(options::OPT_enable_experimental_feature),
-          "Embedded")) {
+  if (gnustepObjCInterop ||
+      (Triple.isOSDarwin() &&
+       !containsValue(
+           inputArgs
+             .getAllArgValues(options::OPT_enable_experimental_feature),
+           "Embedded"))) {
     arguments.push_back("-enable-objc-interop");
   } else {
     arguments.push_back("-disable-objc-interop");
@@ -377,7 +383,10 @@ void ToolChain::addCommonFrontendArgs(const OutputInfo &OI,
   inputArgs.AddLastArg(arguments, options::OPT_enable_bare_slash_regex);
   inputArgs.AddLastArg(arguments, options::OPT_enable_experimental_cxx_interop);
   inputArgs.AddLastArg(arguments, options::OPT_cxx_interoperability_mode);
-  inputArgs.AddLastArg(arguments, options::OPT_objc_runtime_EQ);
+  if (gnustepObjCInterop)
+    arguments.push_back("-objc-runtime=gnustep");
+  else
+    inputArgs.AddLastArg(arguments, options::OPT_objc_runtime_EQ);
   inputArgs.AddLastArg(arguments, options::OPT_enable_builtin_module);
   inputArgs.AddLastArg(arguments, options::OPT_compiler_assertions);
   inputArgs.AddLastArg(arguments, options::OPT_load_pass_plugin_EQ);

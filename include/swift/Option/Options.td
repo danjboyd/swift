@@ -350,6 +350,11 @@ def Isystem : Separate<["-"], "Isystem">,
          SwiftAPIDigesterOption, SwiftSynthesizeInterfaceOption]>,
   HelpText<"Add directory to the system import search path">;
 
+// Local to the gnustep-swift project; not for upstream.
+def gnustep_objc_interop : Flag<["-"], "gnustep-objc-interop">,
+  Flags<[FrontendOption, HelpHidden]>,
+  HelpText<"Same as -enable-objc-interop -objc-runtime=gnustep">;
+
 def import_underlying_module : Flag<["-"], "import-underlying-module">,
   Flags<[FrontendOption, NoInteractiveOption]>,
   HelpText<"Implicitly imports the Objective-C half of a module">;
