@@ -160,8 +160,12 @@ Type TypeConverter::getLoweredCBridgedType(AbstractionPattern pattern,
       auto builtinTy = clangTy->castAs<clang::BuiltinType>();
       if (builtinTy->getKind() == clang::BuiltinType::Bool)
         return t;
-      if (builtinTy->getKind() == clang::BuiltinType::UChar)
+      if (builtinTy->getKind() == clang::BuiltinType::UChar) {
+        // GNUstep's BOOL is unsigned char.
+        if (Context.LangOpts.usesGNUstepObjCRuntime())
+          return getObjCBoolType();
         return getDarwinBooleanType();
+      }
       if (builtinTy->getKind() == clang::BuiltinType::Int)
         return getWindowsBoolType();
       assert(builtinTy->getKind() == clang::BuiltinType::SChar);

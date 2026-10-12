@@ -395,6 +395,10 @@ getSwiftStdlibType(const clang::TypedefNameDecl *D,
     break;
 
   case MappedCTypeKind::ObjCBool:
+    // GNUstep's BOOL is unsigned char, not the target's Objective-C bool.
+    if (Impl.SwiftContext.LangOpts.usesGNUstepObjCRuntime() &&
+        ClangType->isSpecificBuiltinType(clang::BuiltinType::UChar))
+      break;
     if (!ClangCtx.hasSameType(ClangType, ClangCtx.ObjCBuiltinBoolTy) &&
         !(ClangCtx.getBOOLDecl() &&
           ClangCtx.hasSameType(ClangType, ClangCtx.getBOOLType())))

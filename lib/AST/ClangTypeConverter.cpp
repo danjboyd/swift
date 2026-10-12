@@ -285,7 +285,11 @@ ClangTypeConverter::reverseImportedTypeMapping(StructType *type) {
                      KnownFoundationEntity::NSZone),
                    ctx.VoidPtrTy);
   CHECK_NAMED_TYPE("WindowsBool", ctx.IntTy);
-  CHECK_NAMED_TYPE("ObjCBool", ctx.ObjCBuiltinBoolTy);
+  // GNUstep's BOOL is unsigned char, not the target's Objective-C bool.
+  CHECK_NAMED_TYPE("ObjCBool",
+                   swiftDecl->getASTContext().LangOpts.usesGNUstepObjCRuntime()
+                       ? ctx.UnsignedCharTy
+                       : ctx.ObjCBuiltinBoolTy);
   CHECK_NAMED_TYPE("Selector", getClangSelectorType(ctx));
   CHECK_NAMED_TYPE("UnsafeRawPointer", ctx.VoidPtrTy);
   CHECK_NAMED_TYPE("UnsafeMutableRawPointer", ctx.VoidPtrTy);
