@@ -1673,6 +1673,8 @@ namespace {
         b.addNullPointer(IGM.Int8PtrTy);
       } else {
         b.add(buildIvarList());
+        if (IGM.Context.LangOpts.usesGNUstepObjCRuntime())
+          emitGNUstepIvarList();
       }
 
       //   const uint8_t *weakIvarLayout;
@@ -2129,14 +2131,16 @@ namespace {
       visitProperty(var);
     }
 
-    /// struct ivar_t {
-    ///   uintptr_t *offset;
-    ///   const char *name;
-    ///   const char *type;
-    ///   uint32_t alignment;    // actually the log2 of the alignment
-    ///   uint32_t size;
-    /// };
-    void buildIvar(ConstantArrayBuilder &ivars, Field field) {
+    /// The parts of an instance variable both runtimes' ivar records need.
+    struct IvarInfo {
+      llvm::Constant *offsetPtr;
+      StringRef name;
+      std::string typeEncoding;
+      Size size;
+      Alignment alignment;
+    };
+
+    IvarInfo getIvarInfo(Field field) {
       assert(FieldLayout && "can't build ivar for category");
 
       // For now, we never try to emit specialized versions of the
@@ -2173,7 +2177,6 @@ namespace {
         break;
       }
 
-      StringRef name = field.getName();
       std::string typeEnc;
       if (field.getKind() == Field::Var) {
         auto *varDecl = field.getVarDecl();
@@ -2191,19 +2194,8 @@ namespace {
             typeEnc = "?";
         }
       }
+
       const TypeInfo &storageTI = pair.second.getType();
-      auto fields = ivars.beginStruct();
-
-      if (offsetPtr)
-        fields.add(offsetPtr);
-      else
-        fields.addNullPointer(IGM.PtrTy);
-
-      fields.add(
-          IGM.getAddrOfGlobalString(name, CStringSectionType::ObjCMethodName));
-      fields.add(IGM.getAddrOfGlobalString(typeEnc,
-                                           CStringSectionType::ObjCMethodType));
-
       Size size;
       Alignment alignment;
       if (auto fixedTI = dyn_cast<FixedTypeInfo>(&storageTI)) {
@@ -2222,8 +2214,69 @@ namespace {
                   " bytes) overflows Objective-C ivar layout");
         size = Size(0);
       }
-      fields.addInt32(alignment.log2());
-      fields.addInt32(size.getValue());
+
+      return {offsetPtr, field.getName(), typeEnc, size, alignment};
+    }
+
+    /// struct ivar_t {
+    ///   uintptr_t *offset;
+    ///   const char *name;
+    ///   const char *type;
+    ///   uint32_t alignment;    // actually the log2 of the alignment
+    ///   uint32_t size;
+    /// };
+    void buildIvar(ConstantArrayBuilder &ivars, Field field) {
+      IvarInfo info = getIvarInfo(field);
+      auto fields = ivars.beginStruct();
+
+      if (info.offsetPtr)
+        fields.add(info.offsetPtr);
+      else
+        fields.addNullPointer(IGM.PtrTy);
+
+      fields.add(IGM.getAddrOfGlobalString(info.name,
+                                           CStringSectionType::ObjCMethodName));
+      fields.add(IGM.getAddrOfGlobalString(info.typeEncoding,
+                                           CStringSectionType::ObjCMethodType));
+      fields.addInt32(info.alignment.log2());
+      fields.addInt32(info.size.getValue());
+
+      fields.finishAndAddTo(ivars);
+    }
+
+    /// GNUstep runtime (gnustep-2.0 ABI) ivar record:
+    ///
+    /// struct objc_ivar {
+    ///   const char *name;
+    ///   const char *type;
+    ///   int *offset;
+    ///   uint32_t size;
+    ///   uint32_t flags;    // log2 of the alignment, shifted left by 3
+    /// };
+    void buildGNUstepIvar(ConstantArrayBuilder &ivars, Field field) {
+      IvarInfo info = getIvarInfo(field);
+      auto fields = ivars.beginStruct();
+
+      fields.add(IGM.getAddrOfGlobalString(info.name,
+                                           CStringSectionType::ObjCMethodName));
+      fields.add(IGM.getAddrOfGlobalString(info.typeEncoding,
+                                           CStringSectionType::ObjCMethodType));
+
+      // The runtime stores every ivar's final offset through this pointer,
+      // as an int.  The Swift field offset globals are pointer-sized; on the
+      // little-endian targets GNUstep supports the store lands in their low
+      // half.  Fields without a global still need a slot to receive it.
+      llvm::Constant *offsetPtr = info.offsetPtr;
+      if (!offsetPtr) {
+        offsetPtr = new llvm::GlobalVariable(
+            IGM.Module, IGM.Int32Ty, /*constant*/ false,
+            llvm::GlobalValue::PrivateLinkage,
+            llvm::ConstantInt::get(IGM.Int32Ty, 0),
+            "_IVAR_OFFSET_SLOT_");
+      }
+      fields.add(offsetPtr);
+      fields.addInt32(info.size.getValue());
+      fields.addInt32(info.alignment.log2() << 3);
 
       fields.finishAndAddTo(ivars);
     }
@@ -2243,6 +2296,33 @@ namespace {
           [&](ConstantArrayBuilder &descriptors, Field field) {
             buildIvar(descriptors, field);
           });
+    }
+
+    /// The GNUstep runtime's ivar list, referenced from the class's GNUstep
+    /// class record as _GNUSTEP_IVARS_<name>.  The class ro-data keeps the
+    /// list above, which the Swift runtime reads when it initializes class
+    /// metadata.
+    ///
+    /// struct objc_ivar_list {
+    ///   int count;
+    ///   size_t size;    // sizeof(struct objc_ivar)
+    ///   struct objc_ivar ivar_list[count];
+    /// };
+    void emitGNUstepIvarList() {
+      if (Ivars.empty())
+        return;
+
+      ConstantInitBuilder builder(IGM);
+      auto fields = builder.beginStruct();
+      fields.addInt32(Ivars.size());
+      fields.addInt(IGM.SizeTy,
+                    (3 * IGM.getPointerSize() + Size(8)).getValue());
+      auto array = fields.beginArray();
+      for (auto field : Ivars)
+        buildGNUstepIvar(array, field);
+      array.finishAndAddTo(fields);
+      buildGlobalVariable(fields, "_GNUSTEP_IVARS_", /*const*/ false,
+                          llvm::GlobalVariable::InternalLinkage);
     }
 
     /*** Properties ********************************************************/
