@@ -2235,6 +2235,19 @@ FUNCTION(GetInitializedObjCClass, Swift, swift_getInitializedObjCClass,
          EFFECT(RuntimeEffect::MetaData),
          UNKNOWN_MEMEFFECTS)
 
+// void swift_registerGNUstepObjCClassMetadata(Class classRecord,
+//                                             const Metadata *metadata);
+// Tells the runtime which Swift class metadata a GNUstep class record
+// belongs to.
+FUNCTION(RegisterGNUstepObjCClassMetadata, Swift,
+         swift_registerGNUstepObjCClassMetadata,
+         C_CC, AlwaysAvailable,
+         RETURNS(VoidTy),
+         ARGS(ObjCClassPtrTy, TypeMetadataPtrTy),
+         ATTRS(NoUnwind),
+         EFFECT(RuntimeEffect::MetaData),
+         UNKNOWN_MEMEFFECTS)
+
 // void swift_objc_swift3ImplicitObjCEntrypoint(id self, SEL selector)
 FUNCTION(Swift3ImplicitObjCEntrypoint, Swift, swift_objc_swift3ImplicitObjCEntrypoint,
          C_CC, AlwaysAvailable,

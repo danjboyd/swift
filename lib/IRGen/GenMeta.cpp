@@ -5434,6 +5434,31 @@ namespace {
   };
 } // end anonymous namespace
 
+/// Define the GNUstep runtime's reference to an Objective-C class,
+/// ._OBJC_REF_CLASS_<name>, through which other images refer to the class,
+/// unless this module already has a reference to it.  The reference is as
+/// visible as the class symbol.
+static void emitGNUstepObjCClassRef(IRGenModule &IGM, StringRef runtimeName,
+                                    llvm::Constant *classObject,
+                                    const LinkInfo &classLink) {
+  auto refName = (Twine("._OBJC_REF_CLASS_") + runtimeName).str();
+  if (IGM.Module.getNamedValue(refName))
+    return;
+
+  auto *ref = new llvm::GlobalVariable(
+      IGM.Module, IGM.ObjCClassPtrTy, /*isConstant*/ false,
+      classLink.getLinkage(),
+      llvm::ConstantExpr::getBitCast(classObject, IGM.ObjCClassPtrTy),
+      refName);
+  ApplyIRLinkage({classLink.getLinkage(), classLink.getVisibility(),
+                  classLink.getDLLStorage()})
+      .to(ref, classLink.isForDefinition());
+  ref->setSection(
+      IGM.GetObjCSectionName("__objc_class_refs", "regular,no_dead_strip"));
+  ref->setExternallyInitialized(true);
+  IGM.addCompilerUsedGlobal(ref);
+}
+
 /// Emit the ObjC-compatible class symbol for a class.
 /// Since LLVM and many system linkers do not have a notion of relative symbol
 /// references, we emit the symbol as a global asm block.
@@ -5454,6 +5479,108 @@ static void emitObjCClassSymbol(IRGenModule &IGM, ClassDecl *classDecl,
                                           metadata, &IGM.Module);
   ApplyIRLinkage({link.getLinkage(), link.getVisibility(), link.getDLLStorage()})
       .to(alias, link.isForDefinition());
+
+  if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+    llvm::SmallString<64> nameBuffer;
+    emitGNUstepObjCClassRef(IGM, classDecl->getObjCRuntimeName(nameBuffer),
+                            metadata, link);
+  }
+}
+
+/// The method, ivar, protocol or property list that GenClass emitted for the
+/// named class, or null if the class has none.
+static llvm::Constant *
+getGNUstepObjCListGlobal(IRGenModule &IGM, StringRef prefix,
+                         StringRef runtimeName) {
+  auto *value = IGM.Module.getNamedValue((Twine(prefix) + runtimeName).str());
+  if (!value)
+    return llvm::ConstantPointerNull::get(IGM.OpaquePtrTy);
+  return llvm::ConstantExpr::getBitCast(value, IGM.OpaquePtrTy);
+}
+
+/// Emit the GNUstep runtime's class record for a Swift class exposed to
+/// Objective-C: the struct objc_class that the runtime loads and that
+/// Objective-C code sees as the class.  The Swift class metadata stays
+/// separate; the runtime maps between the two.
+static llvm::Constant *
+emitGNUstepObjCClassRecord(IRGenModule &IGM, ClassDecl *classDecl,
+                           const ClassLayout &fieldLayout) {
+  llvm::SmallString<64> nameBuffer;
+  StringRef runtimeName = classDecl->getObjCRuntimeName(nameBuffer);
+
+  auto *metaclass = IGM.getAddrOfMetaclassObject(classDecl, NotForDefinition);
+  auto *name = IGM.getAddrOfGlobalString(runtimeName,
+                                         CStringSectionType::ObjCClassName);
+
+  llvm::Constant *superclass =
+      llvm::ConstantPointerNull::get(IGM.ObjCClassPtrTy);
+  if (auto superclassType = getSuperclassForMetadata(IGM, classDecl)) {
+    if (auto superclassDecl = superclassType.getClassOrBoundGenericClass()) {
+      if (!superclassDecl->isForeign() && superclassDecl->isObjC()) {
+        superclass = llvm::ConstantExpr::getBitCast(
+            IGM.getAddrOfObjCClass(superclassDecl, NotForDefinition),
+            IGM.ObjCClassPtrTy);
+      }
+    }
+    if (superclass->isNullValue()) {
+      if (auto superclassMetadata =
+            tryEmitConstantHeapMetadataRef(IGM, superclassType,
+                                           /*allowUninit*/ false)) {
+        superclass = llvm::ConstantExpr::getBitCast(superclassMetadata,
+                                                    IGM.ObjCClassPtrTy);
+      }
+    }
+  }
+
+  auto nullClass = llvm::ConstantPointerNull::get(IGM.ObjCClassPtrTy);
+  auto nullOpaque = llvm::ConstantPointerNull::get(IGM.OpaquePtrTy);
+  auto nullFunction = llvm::ConstantPointerNull::get(IGM.FunctionPtrTy);
+
+  // The runtime sizes a class from its ivar list: without one it copies the
+  // superclass's instance size.  A non-positive instance size marks the
+  // ivars as late-bound, so the runtime lays them out after the superclass
+  // and stores each final offset into the Swift field offset global the ivar
+  // record points at.  By convention the value is minus the size of this
+  // class's own ivars.
+  auto *ivars = getGNUstepObjCListGlobal(IGM, "_GNUSTEP_IVARS_", runtimeName);
+  int64_t instanceSize = 0;
+  if (!ivars->isNullValue())
+    instanceSize = -int64_t(fieldLayout.getSize().getValue() -
+                            fieldLayout.getInstanceStart().getValue());
+
+  llvm::Constant *fields[] = {
+    llvm::ConstantExpr::getBitCast(metaclass, IGM.ObjCClassPtrTy),
+    superclass,
+    name,
+    llvm::ConstantInt::get(IGM.IntPtrTy, 0),
+    llvm::ConstantInt::get(IGM.IntPtrTy, 0),
+    llvm::ConstantInt::getSigned(IGM.IntPtrTy, instanceSize),
+    ivars,
+    getGNUstepObjCListGlobal(IGM, "_INSTANCE_METHODS_", runtimeName),
+    nullOpaque,
+    nullClass,
+    nullFunction,
+    nullFunction,
+    nullClass,
+    getGNUstepObjCListGlobal(IGM, "_PROTOCOLS_", runtimeName),
+    nullOpaque,
+    llvm::ConstantInt::get(IGM.IntPtrTy, 0),
+    getGNUstepObjCListGlobal(IGM, "_PROPERTIES_", runtimeName)
+  };
+
+  auto init = llvm::ConstantStruct::get(IGM.ObjCClassStructTy, fields);
+  LinkEntity entity = LinkEntity::forObjCClass(classDecl);
+  LinkInfo link = LinkInfo::get(IGM, entity, ForDefinition);
+  auto *global = new llvm::GlobalVariable(
+      IGM.Module, IGM.ObjCClassStructTy, /*isConstant*/ false,
+      link.getLinkage(), init, link.getName());
+  ApplyIRLinkage(
+      {link.getLinkage(), link.getVisibility(), link.getDLLStorage()})
+      .to(global, link.isForDefinition());
+  global->setExternallyInitialized(true);
+  emitGNUstepObjCClassRef(IGM, runtimeName, global, link);
+
+  return llvm::ConstantExpr::getBitCast(global, IGM.ObjCClassPtrTy);
 }
 
 /// Check whether the metadata update strategy requires runtime support that is
@@ -5664,6 +5791,24 @@ void irgen::emitClassMetadata(IRGenModule &IGM, ClassDecl *classDecl,
     case ClassMetadataStrategy::Update:
     case ClassMetadataStrategy::FixedOrUpdate:
     case ClassMetadataStrategy::Fixed:
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        // The GNUstep runtime loads a class record that is separate from the
+        // Swift metadata, and the Swift runtime maps between them.  The
+        // standard library's Objective-C classes are instead realized by the
+        // Swift runtime from their metadata, which is never put in the
+        // runtime's class list.
+        if (!IGM.getSwiftModule()->isStdlibModule() && classDecl->isObjC()) {
+          auto classRecord =
+              emitGNUstepObjCClassRecord(IGM, classDecl, fragileLayout);
+          IGM.addGNUstepObjCClassMetadataMapping(classRecord, var);
+          IGM.addObjCClass(classRecord,
+              classDecl->getAttrs().hasAttribute<ObjCNonLazyRealizationAttr>());
+        } else if (classDecl->isObjC()) {
+          emitObjCClassSymbol(IGM, classDecl, var, var->getValueType());
+        }
+        break;
+      }
+
       if (classDecl->isObjC())
         emitObjCClassSymbol(IGM, classDecl, var, var->getValueType());
 

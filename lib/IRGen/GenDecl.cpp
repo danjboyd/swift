@@ -786,6 +786,40 @@ void IRGenModule::emitRuntimeRegistration() {
   RegIGF.Builder.CreateRetVoid();
 }
 
+/// Under the GNUstep runtime, emit a constructor that tells the Swift runtime
+/// which GNUstep class record belongs to which Swift class metadata.  Its
+/// priority runs it before constructors of default priority, among them the
+/// Objective-C runtime's load function, so that the mapping exists before
+/// the classes can be used.
+void IRGenModule::emitGNUstepObjCClassMetadataRegistration() {
+  if (!Context.LangOpts.usesGNUstepObjCRuntime() ||
+      GNUstepObjCClassMetadataMappings.empty())
+    return;
+
+  auto fnTy = llvm::FunctionType::get(VoidTy, /*varArg*/ false);
+  auto registerMetadataFn = llvm::Function::Create(
+      fnTy, llvm::GlobalValue::PrivateLinkage,
+      "_swift_gnustep_objc_class_metadata_registration", getModule());
+  registerMetadataFn->setAttributes(constructInitialAttributes());
+  registerMetadataFn->setCallingConv(DefaultCC);
+  setColocateMetadataSection(registerMetadataFn);
+
+  IRGenFunction registerIGF(*this, registerMetadataFn);
+  if (DebugInfo)
+    DebugInfo->emitArtificialFunction(registerIGF, registerMetadataFn);
+
+  for (auto &mapping : GNUstepObjCClassMetadataMappings) {
+    auto *classRecord = cast<llvm::Constant>(mapping.first);
+    auto *metadata = cast<llvm::Constant>(mapping.second);
+    registerIGF.Builder.CreateCall(
+        getRegisterGNUstepObjCClassMetadataFunctionPointer(),
+        {classRecord, metadata});
+  }
+  registerIGF.Builder.CreateRetVoid();
+
+  llvm::appendToGlobalCtors(Module, registerMetadataFn, 60000, nullptr);
+}
+
 /// Return the address of the context descriptor representing the given
 /// decl context, used as a parent reference for another decl.
 ///
@@ -972,6 +1006,11 @@ void IRGenModule::addObjCClass(llvm::Constant *classPtr, bool nonlazy) {
   ObjCClasses.push_back(classPtr);
   if (nonlazy)
     ObjCNonLazyClasses.push_back(classPtr);
+}
+
+void IRGenModule::addGNUstepObjCClassMetadataMapping(
+    llvm::Constant *classRecord, llvm::Constant *metadata) {
+  GNUstepObjCClassMetadataMappings.push_back({classRecord, metadata});
 }
 
 /// Add the given global value to the Objective-C resilient class stub list.

@@ -1580,6 +1580,7 @@ GeneratedModule IRGenRequest::evaluate(Evaluator &evaluator,
       IGM.emitReflectionMetadataVersion();
       irgen.emitEagerClassInitialization();
       irgen.emitObjCActorsNeedingSuperclassSwizzle();
+      IGM.emitGNUstepObjCClassMetadataRegistration();
       irgen.emitDynamicReplacements();
     }
 

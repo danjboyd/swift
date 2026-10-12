@@ -1262,6 +1262,8 @@ public:
   void addGenericROData(llvm::Constant *addr);
   void addObjCClass(llvm::Constant *addr, bool nonlazy);
   void addObjCClassStub(llvm::Constant *addr);
+  void addGNUstepObjCClassMetadataMapping(llvm::Constant *classRecord,
+                                          llvm::Constant *metadata);
   void addProtocolConformance(ConformanceDescription &&conformance);
   void addAccessibleFunction(AccessibleFunction func);
 
@@ -1403,6 +1405,9 @@ private:
   SmallVector<llvm::WeakTrackingVH, 4> ObjCNonLazyClasses;
   /// List of Objective-C resilient class stubs, bitcast to i8*.
   SmallVector<llvm::WeakTrackingVH, 4> ObjCClassStubs;
+  /// GNUstep Objective-C class records and their Swift class metadata.
+  SmallVector<std::pair<llvm::WeakTrackingVH, llvm::WeakTrackingVH>, 4>
+      GNUstepObjCClassMetadataMappings;
   /// List of Objective-C categories, bitcast to i8*.
   SmallVector<llvm::WeakTrackingVH, 4> ObjCCategories;
   /// List of Objective-C categories on class stubs, bitcast to i8*.
@@ -2097,6 +2102,7 @@ public:
     hasSwiftAsyncFunctionDef = true;
   }
   void emitRuntimeRegistration();
+  void emitGNUstepObjCClassMetadataRegistration();
   void emitVTableStubs();
   void emitTypeVerifier();
   llvm::Function *emitHasSymbolFunction(ValueDecl *decl);
