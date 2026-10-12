@@ -302,11 +302,27 @@ struct ObjCRetainableBox : RetainableBoxBase<ObjCRetainableBox, void*> {
     swift_getHeapObjectExtraInhabitantCount();
 
   static void *retain(void *obj) {
+#if defined(__GNUSTEP_RUNTIME__)
+    // The object may be a native Swift object, which libobjc2's
+    // objc_retain() cannot handle; extra inhabitants are not objects.
+    if (swift_getHeapObjectExtraInhabitantIndex(
+            (HeapObject * const *)&obj) >= 0)
+      return obj;
+    return swift_unknownObjectRetain(obj);
+#else
     return objc_retain((id)obj);
+#endif
   }
 
   static void release(void *obj) {
+#if defined(__GNUSTEP_RUNTIME__)
+    if (swift_getHeapObjectExtraInhabitantIndex(
+            (HeapObject * const *)&obj) >= 0)
+      return;
+    swift_unknownObjectRelease(obj);
+#else
     objc_release((id)obj);
+#endif
   }
 };
 

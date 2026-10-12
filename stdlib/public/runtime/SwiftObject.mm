@@ -87,6 +87,18 @@ const ClassMetadata *swift::_swift_getClass(const void *object) {
 #endif
 }
 
+#if defined(__GNUSTEP_RUNTIME__)
+/// object_getClass() for compiler-generated code: the class of an instance
+/// of a Swift class that has no GNUstep class record is its Swift metadata.
+/// See _swift_getClassOfAllocated().
+SWIFT_RUNTIME_EXPORT
+Class swift_gnustep_getObjectClass(id object) {
+  if (isObjCTaggedPointerOrNull(object))
+    return object_getClass(object);
+  return class_const_cast(_swift_getClassOfAllocated(object));
+}
+#endif
+
 #if SWIFT_OBJC_INTEROP
 /// Replacement for ObjC object_isClass(), which is unavailable on
 /// deployment targets macOS 10.9 and iOS 7.
@@ -359,6 +371,17 @@ STANDARD_OBJC_METHOD_IMPLS_FOR_SWIFT_OBJECTS
 
 - (BOOL)conformsToProtocol:(Protocol*)proto {
   if (!proto) return NO;
+#if defined(__GNUSTEP_RUNTIME__)
+  const Metadata *currentType = swift_getObjCClassMetadata(
+      reinterpret_cast<const ClassMetadata *>(
+          _swift_getObjCClassOfAllocated(self)));
+
+  while (currentType) {
+    if (class_conformsToProtocol(currentType->getObjCClassObject(), proto))
+      return YES;
+    currentType = _swift_class_getSuperclass(currentType);
+  }
+#else
   auto selfClass = _swift_getObjCClassOfAllocated(self);
 
   // Walk the superclass chain.
@@ -367,6 +390,7 @@ STANDARD_OBJC_METHOD_IMPLS_FOR_SWIFT_OBJECTS
       return YES;
     selfClass = class_getSuperclass(selfClass);
   }
+#endif
 
   return NO;
 }
@@ -374,6 +398,16 @@ STANDARD_OBJC_METHOD_IMPLS_FOR_SWIFT_OBJECTS
 + (BOOL)conformsToProtocol:(Protocol*)proto {
   if (!proto) return NO;
 
+#if defined(__GNUSTEP_RUNTIME__)
+  const Metadata *currentType = swift_getObjCClassMetadata(
+      reinterpret_cast<const ClassMetadata *>(self));
+
+  while (currentType) {
+    if (class_conformsToProtocol(currentType->getObjCClassObject(), proto))
+      return YES;
+    currentType = _swift_class_getSuperclass(currentType);
+  }
+#else
   // Walk the superclass chain.
   Class selfClass = self;
   while (selfClass) {
@@ -381,6 +415,7 @@ STANDARD_OBJC_METHOD_IMPLS_FOR_SWIFT_OBJECTS
       return YES;
     selfClass = class_getSuperclass(selfClass);
   }
+#endif
 
   return NO;
 }
@@ -563,6 +598,14 @@ SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
 bool
 _swift_objcClassUsesNativeSwiftReferenceCounting(const Metadata *theClass) {
 #if SWIFT_OBJC_INTEROP
+#if defined(__GNUSTEP_RUNTIME__)
+  // The class may be a GNUstep class record; look at its Swift metadata.
+  theClass = swift_getObjCClassMetadata(
+      reinterpret_cast<const ClassMetadata *>(theClass));
+  if (!theClass)
+    return false;
+#endif
+
   // If this is ObjC wrapper metadata, the class is definitely not using
   // Swift ref-counting.
   if (isa<ObjCClassWrapperMetadata>(theClass)) return false;
@@ -1195,9 +1238,23 @@ swift_dynamicCastObjCClassImpl(const void *object,
   if (object == nullptr)
     return nullptr;
 
+#if defined(__GNUSTEP_RUNTIME__)
+  const Metadata *targetMetadata = swift_getObjCClassMetadata(targetType);
+  const Metadata *sourceMetadata = swift_getObjCClassMetadata(
+      reinterpret_cast<const ClassMetadata *>(
+          object_getClass(id_const_cast(object))));
+  for (auto currentType = sourceMetadata;
+       currentType != nullptr;
+       currentType = _swift_class_getSuperclass(currentType)) {
+    if (currentType == targetMetadata) {
+      return object;
+    }
+  }
+#else
   if ([id_const_cast(object) isKindOfClass:class_const_cast(targetType)]) {
     return object;
   }
+#endif
 
   // For casts to NSError or NSObject, we might need to bridge via the Error
   // protocol. Try it now.
@@ -1225,9 +1282,23 @@ swift_dynamicCastObjCClassUnconditionalImpl(const void *object,
   if (object == nullptr)
     return nullptr;
 
+#if defined(__GNUSTEP_RUNTIME__)
+  const Metadata *targetMetadata = swift_getObjCClassMetadata(targetType);
+  const Metadata *sourceMetadata = swift_getObjCClassMetadata(
+      reinterpret_cast<const ClassMetadata *>(
+          object_getClass(id_const_cast(object))));
+  for (auto currentType = sourceMetadata;
+       currentType != nullptr;
+       currentType = _swift_class_getSuperclass(currentType)) {
+    if (currentType == targetMetadata) {
+      return object;
+    }
+  }
+#else
   if ([id_const_cast(object) isKindOfClass:class_const_cast(targetType)]) {
     return object;
   }
+#endif
 
   // For casts to NSError or NSObject, we might need to bridge via the Error
   // protocol. Try it now.
@@ -1243,9 +1314,13 @@ swift_dynamicCastObjCClassUnconditionalImpl(const void *object,
     }
   }
 
+#if defined(__GNUSTEP_RUNTIME__)
+  swift_dynamicCastFailure(_swift_getClass(object), targetMetadata);
+#else
   Class sourceType = object_getClass(id_const_cast(object));
   swift_dynamicCastFailure(reinterpret_cast<const Metadata *>(sourceType),
                            targetType);
+#endif
 }
 
 static const void *

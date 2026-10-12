@@ -1045,6 +1045,60 @@ namespace {
 static SimpleGlobalCache<ObjCClassCacheEntry, ObjCClassWrappersTag>
   ObjCClassWrappers;
 
+#if defined(__GNUSTEP_RUNTIME__)
+// Under the GNUstep runtime, a Swift class exposed to Objective-C has a class
+// record that is separate from its Swift metadata.  Each image registers its
+// pairs when it is loaded (see IRGen's
+// emitGNUstepObjCClassMetadataRegistration()).
+static LazyMutex GNUstepObjCClassMetadataLock;
+
+static llvm::DenseMap<const ClassMetadata *, const Metadata *> &
+getGNUstepObjCClassMetadataMap() {
+  static auto *Map =
+      new llvm::DenseMap<const ClassMetadata *, const Metadata *>();
+  return *Map;
+}
+
+static llvm::DenseMap<const Metadata *, const ClassMetadata *> &
+getGNUstepObjCClassRecordMap() {
+  static auto *Map =
+      new llvm::DenseMap<const Metadata *, const ClassMetadata *>();
+  return *Map;
+}
+
+SWIFT_RUNTIME_EXPORT
+void swift_registerGNUstepObjCClassMetadata(const void *classRecord,
+                                            const void *metadata) {
+  if (!classRecord || !metadata)
+    return;
+
+  auto objcClass = reinterpret_cast<const ClassMetadata *>(classRecord);
+  auto swiftMetadata = reinterpret_cast<const Metadata *>(metadata);
+  GNUstepObjCClassMetadataLock.withLock([&] {
+    getGNUstepObjCClassMetadataMap()[objcClass] = swiftMetadata;
+    getGNUstepObjCClassRecordMap()[swiftMetadata] = objcClass;
+  });
+}
+
+static const Metadata *
+getRegisteredGNUstepObjCClassMetadata(const ClassMetadata *theClass) {
+  return GNUstepObjCClassMetadataLock.withLock([&]() -> const Metadata * {
+    auto &map = getGNUstepObjCClassMetadataMap();
+    auto found = map.find(theClass);
+    return found == map.end() ? nullptr : found->second;
+  });
+}
+
+static const ClassMetadata *
+getRegisteredGNUstepObjCClassRecord(const Metadata *metadata) {
+  return GNUstepObjCClassMetadataLock.withLock([&]() -> const ClassMetadata * {
+    auto &map = getGNUstepObjCClassRecordMap();
+    auto found = map.find(metadata);
+    return found == map.end() ? nullptr : found->second;
+  });
+}
+#endif
+
 const Metadata *
 swift::swift_getObjCClassMetadata(const ClassMetadata *theClass) {
   // Make calls resilient against receiving a null Objective-C class. This can
@@ -1057,6 +1111,11 @@ swift::swift_getObjCClassMetadata(const ClassMetadata *theClass) {
     return theClass;
   }
 
+#if defined(__GNUSTEP_RUNTIME__)
+  if (auto registeredMetadata = getRegisteredGNUstepObjCClassMetadata(theClass))
+    return registeredMetadata;
+#endif
+
   return &ObjCClassWrappers.getOrInsert(theClass).first->Data;
 }
 
@@ -1067,6 +1126,11 @@ swift::swift_getObjCClassFromMetadata(const Metadata *theMetadata) {
   if (!theMetadata)
     return nullptr;
 
+#if defined(__GNUSTEP_RUNTIME__)
+  if (auto registeredClass = getRegisteredGNUstepObjCClassRecord(theMetadata))
+    return registeredClass;
+#endif
+
   // Unwrap ObjC class wrappers.
   if (auto wrapper = dyn_cast<ObjCClassWrapperMetadata>(theMetadata)) {
     return wrapper->Class;
@@ -1074,6 +1138,10 @@ swift::swift_getObjCClassFromMetadata(const Metadata *theMetadata) {
 
   // Otherwise, the input should already be a Swift class object.
   auto theClass = cast<ClassMetadata>(theMetadata);
+#if defined(__GNUSTEP_RUNTIME__)
+  if (!theClass->isTypeMetadata())
+    return theClass;
+#endif
   assert(theClass->isTypeMetadata());
   return theClass;
 }
@@ -1084,6 +1152,11 @@ swift::swift_getObjCClassFromMetadataConditional(const Metadata *theMetadata) {
   // side effect of UB in dyn_cast, so we'll keep that going.
   if (!theMetadata)
     return nullptr;
+
+#if defined(__GNUSTEP_RUNTIME__)
+  if (auto registeredClass = getRegisteredGNUstepObjCClassRecord(theMetadata))
+    return registeredClass;
+#endif
 
   // If it's an ordinary class, return it.
   if (auto theClass = dyn_cast<ClassMetadata>(theMetadata)) {

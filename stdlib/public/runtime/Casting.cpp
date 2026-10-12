@@ -474,6 +474,14 @@ extern "C" const ClassDescriptor NOMINAL_TYPE_DESCR_SYM(s12__SwiftValueC);
 static const void *swift_dynamicCastClassImpl(const void *object,
                                               const ClassMetadata *targetType) {
 #if SWIFT_OBJC_INTEROP
+#if defined(__GNUSTEP_RUNTIME__)
+  // A GNUstep class record reaches here as class metadata; cast to it as to
+  // any Objective-C class.
+  if (targetType->isPureObjC()) {
+    return swift_dynamicCastObjCClass(object, targetType);
+  }
+#endif
+
   assert(!targetType->isPureObjC());
 
   // Swift native classes never have a tagged-pointer representation.
@@ -483,6 +491,18 @@ static const void *swift_dynamicCastClassImpl(const void *object,
 #endif
 
   auto srcType = _swift_getClassOfAllocated(object);
+
+#if SWIFT_OBJC_INTEROP && defined(__GNUSTEP_RUNTIME__)
+  // The object's class may be a GNUstep class record; compare its Swift
+  // metadata.
+  if (!srcType->isTypeMetadata()) {
+    if (auto metadata = swift_getObjCClassMetadata(srcType)) {
+      if (auto classMetadata = dyn_cast<ClassMetadata>(metadata)) {
+        srcType = classMetadata;
+      }
+    }
+  }
+#endif
 
   if (_dynamicCastClassMetatype(srcType, targetType))
     return object;
@@ -512,6 +532,13 @@ static const void *
 swift_dynamicCastClassUnconditionalImpl(const void *object,
                                         const ClassMetadata *targetType,
                                         const char *file, unsigned line, unsigned column) {
+#if SWIFT_OBJC_INTEROP && defined(__GNUSTEP_RUNTIME__)
+  if (targetType->isPureObjC()) {
+    return swift_dynamicCastObjCClassUnconditional(object, targetType,
+                                                   file, line, column);
+  }
+#endif
+
   auto value = swift_dynamicCastClass(object, targetType);
   if (value) return value;
 

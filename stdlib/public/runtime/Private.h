@@ -173,6 +173,15 @@ public:
   /// Masking, or otherwise, may be required to get a class pointer.
   static inline const ClassMetadata *_swift_getClassOfAllocated(const void *object) {
 #if SWIFT_OBJC_INTEROP && SWIFT_HAS_OPAQUE_ISAS
+#if defined(__GNUSTEP_RUNTIME__)
+    // The isa of an instance of a Swift class that has no GNUstep class
+    // record, such as a generic class instantiation, is the class's Swift
+    // metadata.  libobjc2 would read the metadata's rodata pointer as class
+    // flags, so do not ask it for the class.
+    auto isa = *reinterpret_cast<const ClassMetadata *const *>(object);
+    if (isa->isTypeMetadata())
+      return isa;
+#endif
     // The ISA is opaque so masking it will not return a pointer.  We instead
     // need to call the objc runtime to get the class.
     id idObject = reinterpret_cast<id>(const_cast<void *>(object));
