@@ -1258,8 +1258,11 @@ swift_dynamicCastObjCClassImpl(const void *object,
 
   // For casts to NSError or NSObject, we might need to bridge via the Error
   // protocol. Try it now.
-  if (targetType == reinterpret_cast<const ClassMetadata*>(getNSErrorClass()) ||
-      targetType == reinterpret_cast<const ClassMetadata*>([NSObject class])) {
+  Class nsErrorClass = getNSErrorClass();
+  if (nsErrorClass &&
+      (targetType == reinterpret_cast<const ClassMetadata*>(nsErrorClass) ||
+       targetType ==
+           reinterpret_cast<const ClassMetadata*>([NSObject class]))) {
     auto srcType = swift_getObjCClassMetadata(
         reinterpret_cast<const ClassMetadata*>(
           object_getClass(id_const_cast(object))));
@@ -1302,8 +1305,11 @@ swift_dynamicCastObjCClassUnconditionalImpl(const void *object,
 
   // For casts to NSError or NSObject, we might need to bridge via the Error
   // protocol. Try it now.
-  if (targetType == reinterpret_cast<const ClassMetadata*>(getNSErrorClass()) ||
-      targetType == reinterpret_cast<const ClassMetadata*>([NSObject class])) {
+  Class nsErrorClass = getNSErrorClass();
+  if (nsErrorClass &&
+      (targetType == reinterpret_cast<const ClassMetadata*>(nsErrorClass) ||
+       targetType ==
+           reinterpret_cast<const ClassMetadata*>([NSObject class]))) {
     auto srcType = swift_getObjCClassMetadata(
         reinterpret_cast<const ClassMetadata*>(
           object_getClass(id_const_cast(object))));

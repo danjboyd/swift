@@ -23,7 +23,10 @@
 
 #include "swift/Runtime/Config.h"
 
-#if SWIFT_OBJC_INTEROP
+// Bridging through CoreFoundation, with Apple's runtime.  This tests what
+// ErrorObject.h's SWIFT_OBJC_INTEROP_ERROR_BRIDGING does, which is not yet
+// defined here.
+#if SWIFT_OBJC_INTEROP && !defined(__GNUSTEP_RUNTIME__)
 #include "ErrorObject.h"
 #include "Private.h"
 #include "SwiftObject.h"
@@ -672,5 +675,72 @@ swift::swift_errorRelease(SwiftError *error) {
   return objc_release((id)error);
 }
 
-#endif
+#elif SWIFT_OBJC_INTEROP
 
+// The GNUstep runtime.  There is no CoreFoundation to make Swift error boxes
+// NSErrors; an Error existential may still hold an NSError itself (see
+// ErrorObjectNative.cpp), and the Foundation overlay bridges errors to and
+// from NSError.
+
+#include "ErrorObject.h"
+#include "Private.h"
+#include "swift/Demangling/ManglingMacros.h"
+#include "swift/Runtime/Casting.h"
+
+using namespace swift;
+
+extern "C" const ProtocolDescriptor PROTOCOL_DESCR_SYM(s5Error);
+
+const WitnessTable *swift::findErrorWitness(const Metadata *srcType) {
+  return swift_conformsToProtocolCommon(srcType, &PROTOCOL_DESCR_SYM(s5Error));
+}
+
+SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_INTERNAL
+id _swift_stdlib_getErrorDefaultUserInfo(OpaqueValue *, const Metadata *,
+                                         const WitnessTable *) {
+  return nil;
+}
+
+/// An error can only become an NSError that it embeds.
+id swift::_swift_stdlib_bridgeErrorToNSError(SwiftError *errorObject) {
+  id ns = reinterpret_cast<id>(errorObject);
+  auto value = SwiftError::getIndirectValue(&errorObject);
+  auto type = errorObject->getType();
+  auto witness = errorObject->getErrorConformance();
+
+  if (id embedded = getErrorEmbeddedNSErrorIndirect(value, type, witness)) {
+    swift_unknownObjectRetain(embedded);
+    swift_unknownObjectRelease(ns);
+    return embedded;
+  }
+
+  swift_unknownObjectRelease(ns);
+  return nil;
+}
+
+Class swift::getNSErrorClass() {
+  return Nil;
+}
+
+const Metadata *swift::getNSErrorMetadata() {
+  return nullptr;
+}
+
+id swift::dynamicCastValueToNSError(OpaqueValue *, const Metadata *,
+                                    const WitnessTable *, DynamicCastFlags) {
+  return nil;
+}
+
+bool swift::tryDynamicCastNSErrorObjectToValue(HeapObject *, OpaqueValue *,
+                                               const Metadata *,
+                                               DynamicCastFlags) {
+  return false;
+}
+
+bool swift::tryDynamicCastNSErrorToValue(OpaqueValue *, OpaqueValue *,
+                                         const Metadata *, const Metadata *,
+                                         DynamicCastFlags) {
+  return false;
+}
+
+#endif

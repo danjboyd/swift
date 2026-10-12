@@ -1411,10 +1411,13 @@ static id bridgeAnythingNonVerbatimToObjectiveC(OpaqueValue *src,
   }
   // Handle Errors.
   else if (auto srcErrorWitness = findErrorWitness(srcType)) {
-    // Bridge the source value to an NSError.
-    auto flags = consume ? DynamicCastFlags::TakeOnSuccess
-                         : DynamicCastFlags::Default;
-    return dynamicCastValueToNSError(src, srcType, srcErrorWitness, flags);
+    if (getNSErrorClass()) {
+      // Bridge the source value to an NSError when Cocoa error bridging is
+      // available. Otherwise, fall through to SwiftValue boxing below.
+      auto flags = consume ? DynamicCastFlags::TakeOnSuccess
+                           : DynamicCastFlags::Default;
+      return dynamicCastValueToNSError(src, srcType, srcErrorWitness, flags);
+    }
   }
   // Handle functions:  "Block" types can be bridged literally
   else if (auto fn = dyn_cast<FunctionTypeMetadata>(srcType)) {

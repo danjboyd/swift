@@ -30,13 +30,34 @@
 
 #include <atomic>
 #if SWIFT_OBJC_INTEROP
+# include <objc/runtime.h>
+#endif
+
+/// Whether Swift errors are bridged to NSError through CoreFoundation, as
+/// with Apple's runtime: the error boxes are CF objects that are NSErrors.
+#if SWIFT_OBJC_INTEROP && !defined(__GNUSTEP_RUNTIME__)
+# define SWIFT_OBJC_INTEROP_ERROR_BRIDGING 1
+#else
+# define SWIFT_OBJC_INTEROP_ERROR_BRIDGING 0
+#endif
+#if SWIFT_OBJC_INTEROP_ERROR_BRIDGING
 # include <CoreFoundation/CoreFoundation.h>
-# include <objc/objc.h>
+#endif
+
+/// Under the GNUstep runtime an Error existential can hold an NSError object
+/// itself, the way it can with Apple's runtime, alongside the native Swift
+/// error boxes.  There is no CoreFoundation, so the boxes keep the native
+/// heap object layout.
+#if SWIFT_OBJC_INTEROP && !SWIFT_OBJC_INTEROP_ERROR_BRIDGING && \
+    defined(__GNUSTEP_RUNTIME__)
+# define SWIFT_GNUSTEP_NSERROR_IN_ERROR 1
+#else
+# define SWIFT_GNUSTEP_NSERROR_IN_ERROR 0
 #endif
 
 namespace swift {
 
-#if SWIFT_OBJC_INTEROP
+#if SWIFT_OBJC_INTEROP_ERROR_BRIDGING
 
 // Copied from CoreFoundation/CFRuntime.h.
 struct CFRuntimeBase {
@@ -79,7 +100,7 @@ struct SwiftError : SwiftErrorHeader {
   /// This member is only available for native Swift errors.
   const WitnessTable *errorConformance;
 
-#if SWIFT_OBJC_INTEROP
+#if SWIFT_OBJC_INTEROP_ERROR_BRIDGING
   /// The base type that introduces the `Hashable` conformance.
   /// This member is only available for native Swift errors.
   /// This member is lazily-initialized.
@@ -126,7 +147,7 @@ struct SwiftError : SwiftErrorHeader {
              const_cast<const SwiftError *>(this)->getValue());
   }
   
-#if SWIFT_OBJC_INTEROP
+#if SWIFT_OBJC_INTEROP_ERROR_BRIDGING || SWIFT_GNUSTEP_NSERROR_IN_ERROR
   // True if the object is really an NSError or CFError instance.
   // The type and errorConformance fields don't exist in an NSError.
   bool isPureNSError() const;
@@ -134,7 +155,7 @@ struct SwiftError : SwiftErrorHeader {
   bool isPureNSError() const { return false; }
 #endif
   
-#if SWIFT_OBJC_INTEROP
+#if SWIFT_OBJC_INTEROP_ERROR_BRIDGING || SWIFT_GNUSTEP_NSERROR_IN_ERROR
   /// Get the type of the contained value.
   const Metadata *getType() const;
   /// Get the Error protocol witness table for the contained type.
@@ -146,7 +167,7 @@ struct SwiftError : SwiftErrorHeader {
   const WitnessTable *getErrorConformance() const { return errorConformance; }
 #endif
 
-#if SWIFT_OBJC_INTEROP
+#if SWIFT_OBJC_INTEROP_ERROR_BRIDGING
   /// Get the base type that conforms to `Hashable`.
   /// Returns NULL if the type does not conform.
   const Metadata *getHashableBaseType() const;
