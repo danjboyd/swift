@@ -658,6 +658,17 @@ public func _getObjCTypeEncoding<T>(_ type: T.Type) -> UnsafePointer<Int8> {
 
 //===--- Bridging without the ObjC runtime --------------------------------===//
 
+// swift-corelibs-foundation uses this SPI on Linux, also when the standard
+// library is built with Objective-C interop for the GNUstep runtime.
+#if !_runtime(_ObjC) || os(Linux)
+public // SPI(Foundation)
+protocol _NSSwiftValue: AnyObject {
+  init(_ value: Any)
+  var value: Any { get }
+  static var null: AnyObject { get }
+}
+#endif
+
 #if !_runtime(_ObjC)
 
 /// Convert `x` from its Objective-C representation to its Swift
@@ -684,13 +695,6 @@ public func _conditionallyBridgeFromObjectiveC_bridgeable<T:_ObjectiveCBridgeabl
   var result: T?
   T._conditionallyBridgeFromObjectiveC (x, result: &result)
   return result
-}
-
-public // SPI(Foundation)
-protocol _NSSwiftValue: AnyObject {
-  init(_ value: Any)
-  var value: Any { get }
-  static var null: AnyObject { get }
 }
 
 @usableFromInline
