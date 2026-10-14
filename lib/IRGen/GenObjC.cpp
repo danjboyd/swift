@@ -1406,15 +1406,93 @@ getObjectEncodingFromClangNode(IRGenModule &IGM, Decl *d,
   return nullptr;
 }
 
+/// Find the Objective-C method declared in Clang that \p method, an @objc
+/// method, initializer or accessor, overrides or satisfies a protocol
+/// requirement for, if any.
+static const clang::ObjCMethodDecl *
+findClangObjCMethodBase(AbstractFunctionDecl *method) {
+  if (!method || isa<DestructorDecl>(method))
+    return nullptr;
+
+  llvm::SmallString<64> scratch;
+  StringRef selector = method->getObjCSelector().getString(scratch);
+  auto getClangMethod =
+      [&](const Decl *decl) -> const clang::ObjCMethodDecl * {
+    auto *clangMethod =
+        dyn_cast_or_null<clang::ObjCMethodDecl>(decl->getClangDecl());
+    if (!clangMethod || clangMethod->getSelector().getAsString() != selector)
+      return nullptr;
+    return clangMethod;
+  };
+
+  // Search overridden methods.
+  for (auto *ancestor = method; ancestor;
+       ancestor = ancestor->getOverriddenDecl()) {
+    if (auto *clangMethod = getClangMethod(ancestor))
+      return clangMethod;
+  }
+
+  // Search witnessed requirements.  An accessor's storage is the witness.
+  auto *accessor = dyn_cast<AccessorDecl>(method);
+  ValueDecl *witness = method;
+  if (accessor)
+    witness = accessor->getStorage();
+  for (auto *requirement :
+       witness->getSatisfiedProtocolRequirements(/*Sorted=*/true)) {
+    const Decl *requirementMethod = requirement;
+    if (accessor) {
+      auto *storage = dyn_cast<AbstractStorageDecl>(requirement);
+      if (!storage)
+        continue;
+      requirementMethod = storage->getAccessor(accessor->getAccessorKind());
+      if (!requirementMethod)
+        continue;
+    }
+    if (auto *clangMethod = getClangMethod(requirementMethod))
+      return clangMethod;
+  }
+
+  return nullptr;
+}
+
+/// Get the type encoding of the Objective-C method declared in Clang that
+/// \p method overrides or satisfies a protocol requirement for, if any.
+///
+/// Objective-C code sends the message with that method's signature, and a
+/// runtime that dispatches on typed selectors, such as the GNUstep runtime,
+/// finds the Swift implementation only if its type encoding matches.  An
+/// encoding derived from the Swift type can differ: NSUInteger is imported
+/// as Int, which is encoded as 'q' rather than 'Q', and a SEL that is not
+/// imported as Selector is encoded as '^v' rather than ':'.
+static llvm::Constant *
+getObjCEncodingFromClangBase(IRGenModule &IGM, AbstractFunctionDecl *method,
+                             bool useExtendedEncoding) {
+  auto *clangMethod = findClangObjCMethodBase(method);
+  if (!clangMethod)
+    return nullptr;
+
+  std::string typeStr = IGM.getClangASTContext().getObjCEncodingForMethodDecl(
+      clangMethod, useExtendedEncoding);
+  if (typeStr.empty())
+    return nullptr;
+  return IGM.getAddrOfGlobalString(typeStr, CStringSectionType::ObjCMethodType);
+}
+
 static llvm::Constant *getObjCEncodingForMethod(IRGenModule &IGM,
                                                 CanSILFunctionType fnType,
                                                 bool useExtendedEncoding,
                                                 Decl *optionalDecl) {
-  // Use the decl's ClangNode to get the encoding if possible.
+  // Use the decl's ClangNode to get the encoding if possible, or else the
+  // encoding of the Objective-C method it overrides or implements.
   if (optionalDecl) {
     if (auto *enc = getObjectEncodingFromClangNode(IGM, optionalDecl,
                                                    useExtendedEncoding)) {
       return enc;
+    }
+    if (auto *method = dyn_cast<AbstractFunctionDecl>(optionalDecl)) {
+      if (auto *enc = getObjCEncodingFromClangBase(IGM, method,
+                                                   useExtendedEncoding))
+        return enc;
     }
   }
 
@@ -1499,7 +1577,21 @@ ObjCMethodDescriptor
 irgen::emitObjCGetterDescriptorParts(IRGenModule &IGM, VarDecl *property) {
   Selector getterSel(property, Selector::ForGetter);
   ObjCMethodDescriptor descriptor{};
-  
+
+  // Use the encoding of the Objective-C getter this one overrides or
+  // implements, if any.
+  if (auto *enc = getObjCEncodingFromClangBase(
+          IGM, property->getOpaqueAccessor(AccessorKind::Get),
+          /*extended*/ false)) {
+    descriptor.typeEncoding = enc;
+    descriptor.selectorRef =
+        getObjCMethodDescriptorSelector(IGM, getterSel.str(), enc);
+    descriptor.silFunction = nullptr;
+    descriptor.impl =
+        getObjCGetterPointer(IGM, property, descriptor.silFunction);
+    return descriptor;
+  }
+
   auto clangType = getObjCPropertyType(IGM, property);
   if (clangType.isNull()) {
     descriptor.typeEncoding = llvm::ConstantPointerNull::get(IGM.Int8PtrTy);
@@ -1538,11 +1630,11 @@ irgen::emitObjCGetterDescriptorParts(IRGenModule &IGM,
   Selector getterSel(subscript, Selector::ForGetter);
   ObjCMethodDescriptor descriptor{};
 
-  auto methodTy =
-      getObjCMethodType(IGM, subscript->getOpaqueAccessor(AccessorKind::Get));
+  auto *getter = subscript->getOpaqueAccessor(AccessorKind::Get);
+  auto methodTy = getObjCMethodType(IGM, getter);
   descriptor.typeEncoding =
       getObjCEncodingForMethod(IGM, methodTy,
-                               /*extended*/ false, subscript);
+                               /*extended*/ false, getter);
   descriptor.selectorRef =
       getObjCMethodDescriptorSelector(IGM, getterSel.str(),
                                       descriptor.typeEncoding);
@@ -1578,7 +1670,22 @@ irgen::emitObjCSetterDescriptorParts(IRGenModule &IGM,
 
   Selector setterSel(property, Selector::ForSetter);
   ObjCMethodDescriptor descriptor{};
-  
+
+  // Use the encoding of the Objective-C setter this one overrides or
+  // implements, if any.
+  if (auto *setter = property->getOpaqueAccessor(AccessorKind::Set)) {
+    if (auto *enc = getObjCEncodingFromClangBase(IGM, setter,
+                                                 /*extended*/ false)) {
+      descriptor.typeEncoding = enc;
+      descriptor.selectorRef =
+          getObjCMethodDescriptorSelector(IGM, setterSel.str(), enc);
+      descriptor.silFunction = nullptr;
+      descriptor.impl =
+          getObjCSetterPointer(IGM, property, descriptor.silFunction);
+      return descriptor;
+    }
+  }
+
   auto &clangASTContext = IGM.getClangASTContext();
   std::string TypeStr;
   auto clangType = clangASTContext.VoidTy;
@@ -1628,11 +1735,11 @@ irgen::emitObjCSetterDescriptorParts(IRGenModule &IGM,
 
   Selector setterSel(subscript, Selector::ForSetter);
   ObjCMethodDescriptor descriptor{};
-  auto methodTy = getObjCMethodType(IGM,
-                              subscript->getOpaqueAccessor(AccessorKind::Set));
+  auto *setter = subscript->getOpaqueAccessor(AccessorKind::Set);
+  auto methodTy = getObjCMethodType(IGM, setter);
   descriptor.typeEncoding =
       getObjCEncodingForMethod(IGM, methodTy,
-                               /*extended*/ false, subscript);
+                               /*extended*/ false, setter);
   descriptor.selectorRef =
       getObjCMethodDescriptorSelector(IGM, setterSel.str(),
                                       descriptor.typeEncoding);

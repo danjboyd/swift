@@ -1,0 +1,4 @@
+module OverrideBase [system] {
+  header "OverrideBase.h"
+  export *
+}
