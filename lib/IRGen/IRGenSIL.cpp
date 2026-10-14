@@ -7585,6 +7585,7 @@ void IRGenSILFunction::visitThickToObjCMetatypeInst(ThickToObjCMetatypeInst *i){
   Explosion to;
   llvm::Value *classPtr =
     emitClassHeapMetadataRefForMetatype(*this, swiftMeta, instanceType);
+  classPtr = emitObjCClassForHeapMetadata(*this, classPtr, instanceType);
   to.add(Builder.CreateBitCast(classPtr, IGM.ObjCClassPtrTy));
   setLoweredExplosion(i, to);
 }

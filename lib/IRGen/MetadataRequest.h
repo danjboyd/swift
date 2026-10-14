@@ -690,6 +690,15 @@ llvm::Value *emitClassHeapMetadataRefForMetatype(IRGenFunction &IGF,
                                                  llvm::Value *metatype,
                                                  CanType type);
 
+/// Given the heap metadata of a class, produce the class object the
+/// Objective-C runtime knows, which is the value of an @objc metatype.
+/// This is the heap metadata itself, except under the GNUstep runtime, where
+/// a Swift class exposed to Objective-C has a class record that is separate
+/// from its Swift metadata.
+llvm::Value *emitObjCClassForHeapMetadata(IRGenFunction &IGF,
+                                          llvm::Value *heapMetadata,
+                                          CanType type);
+
 /// Emit a reference to a type layout record for the given type. The referenced
 /// data is enough to lay out an aggregate containing a value of the type, but
 /// can't uniquely represent the type or perform value witness operations on

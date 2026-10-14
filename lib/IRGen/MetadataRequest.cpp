@@ -3973,6 +3973,23 @@ llvm::Value *irgen::emitClassHeapMetadataRefForMetatype(IRGenFunction &IGF,
   return call;
 }
 
+llvm::Value *irgen::emitObjCClassForHeapMetadata(IRGenFunction &IGF,
+                                                 llvm::Value *heapMetadata,
+                                                 CanType type) {
+  // The heap metadata of a class without known Swift metadata is already
+  // its Objective-C class object.
+  if (!IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime() ||
+      !hasKnownSwiftMetadata(IGF.IGM, type))
+    return heapMetadata;
+
+  // Ask the runtime for the class record, if the class has one.
+  auto call = IGF.Builder.CreateCall(
+      IGF.IGM.getGetObjCClassFromMetadataFunctionPointer(), heapMetadata);
+  call->setDoesNotThrow();
+  call->setDoesNotAccessMemory();
+  return call;
+}
+
 /// Produce the heap metadata pointer for the given class type.  For
 /// Swift-defined types, this is equivalent to the metatype for the
 /// class, but for Objective-C-defined types, this is the class
@@ -4031,11 +4048,14 @@ void irgen::emitMetatypeRef(IRGenFunction &IGF, CanMetatypeType type,
     explosion.add(IGF.emitTypeMetadataRef(type.getInstanceType()));
     break;
 
-  case MetatypeRepresentation::ObjC:
-    explosion.add(emitClassHeapMetadataRef(IGF, type.getInstanceType(),
-                                           MetadataValueType::ObjCClass,
-                                           MetadataState::Complete));
+  case MetatypeRepresentation::ObjC: {
+    auto classPtr = emitClassHeapMetadataRef(IGF, type.getInstanceType(),
+                                             MetadataValueType::ObjCClass,
+                                             MetadataState::Complete);
+    explosion.add(
+        emitObjCClassForHeapMetadata(IGF, classPtr, type.getInstanceType()));
     break;
+  }
   }
 }
 

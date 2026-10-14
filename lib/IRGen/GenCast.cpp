@@ -313,6 +313,8 @@ void irgen::emitMetatypeDowncast(IRGenFunction &IGF,
     toMetadata = emitClassHeapMetadataRef(IGF, toMetatype.getInstanceType(),
                                           MetadataValueType::ObjCClass,
                                           MetadataState::Complete);
+    toMetadata = emitObjCClassForHeapMetadata(IGF, toMetadata,
+                                              toMetatype.getInstanceType());
     switch (mode) {
     case CheckedCastMode::Unconditional:
       castFn =
@@ -513,6 +515,8 @@ llvm::Value *irgen::emitMetatypeToAnyObjectDowncast(IRGenFunction &IGF,
       // Get the ObjC metadata for the class.
       auto heapMetadata = emitClassHeapMetadataRefForMetatype(IGF,metatypeValue,
                                                               instanceTy);
+      heapMetadata = emitObjCClassForHeapMetadata(IGF, heapMetadata,
+                                                  instanceTy);
       return IGF.Builder.CreateBitCast(heapMetadata, IGF.IGM.ObjCPtrTy);
     }
     
