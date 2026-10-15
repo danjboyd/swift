@@ -746,33 +746,39 @@ static llvm::Value *emitSuperArgument(IRGenFunction &IGF,
 
   // objc_msgSendSuper2 takes the current class and starts the lookup at its
   // superclass.  The GNUstep runtime's objc_msg_lookup_super takes the class
-  // to start the lookup at.
-  if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime() &&
-      kind == ObjCMessageKind::Super) {
-    CanType superclass;
-    if (isInstanceMethod) {
-      superclass = getSuperclassForMetadata(IGF.IGM, searchClass);
-    } else {
-      superclass = getSuperclassForMetadata(
-          IGF.IGM, cast<MetatypeType>(searchClass).getInstanceType());
+  // to start the lookup at: the superclass's class record for an instance
+  // method, and that record's metaclass for a class method.
+  llvm::Value *searchValue;
+  if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+    CanType instanceClass = isInstanceMethod
+        ? searchClass
+        : cast<MetatypeType>(searchClass).getInstanceType();
+    if (kind == ObjCMessageKind::Super) {
+      if (auto superclass = getSuperclassForMetadata(IGF.IGM, instanceClass))
+        instanceClass = superclass;
     }
 
-    if (superclass)
-      searchClass = superclass;
-  }
-  
-  // Generate the search class object reference.
-  llvm::Value *searchValue;
-  if (isInstanceMethod) {
+    // The GNUstep runtime knows the class record, not the Swift metadata.
+    searchValue = emitClassHeapMetadataRef(IGF, instanceClass,
+                                           MetadataValueType::ObjCClass,
+                                           MetadataState::Complete,
+                                           /*allow uninitialized*/ true);
+    searchValue = IGF.Builder.CreateCall(
+        IGF.IGM.getGetObjCClassFromMetadataFunctionPointer(), searchValue);
+
+    // A class record's isa is its metaclass.  The metaclass of a Swift
+    // class's record is not the Swift metaclass object, so load it from the
+    // record instead of naming it.
+    if (!isInstanceMethod) {
+      searchValue = IGF.Builder.CreateLoad(
+          Address(searchValue, IGF.IGM.ObjCClassPtrTy,
+                  IGF.IGM.getPointerAlignment()));
+    }
+  } else if (isInstanceMethod) {
     searchValue = emitClassHeapMetadataRef(IGF, searchClass,
                                            MetadataValueType::ObjCClass,
                                            MetadataState::Complete,
                                            /*allow uninitialized*/ true);
-    // The GNUstep runtime knows the class record, not the Swift metadata.
-    if (IGF.IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
-      searchValue = IGF.Builder.CreateCall(
-          IGF.IGM.getGetObjCClassFromMetadataFunctionPointer(), searchValue);
-    }
   } else {
     searchClass = cast<MetatypeType>(searchClass).getInstanceType();
     ClassDecl *searchClassDecl = searchClass.getClassOrBoundGenericClass();

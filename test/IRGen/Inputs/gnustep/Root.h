@@ -5,6 +5,7 @@
 __attribute__((objc_root_class))
 @interface Root <Greeting>
 + (instancetype)alloc;
++ (void)reset;
 - (instancetype)init;
 - (void)greet;
 @end
