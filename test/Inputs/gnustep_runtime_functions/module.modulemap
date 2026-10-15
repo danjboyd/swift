@@ -1,0 +1,4 @@
+module GNUstepRuntimeFunctions {
+  header "RuntimeFunctions.h"
+  export *
+}
