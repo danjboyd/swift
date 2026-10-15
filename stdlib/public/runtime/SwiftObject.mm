@@ -226,26 +226,31 @@ id swift::swift_stdlib_gnustep_createNSStringFromUTF8(const char *bytes,
   if (!nsString)
     swift::fatalError(0, "NSString is not loaded; cannot bridge a String\n");
 
-  // GNUstep's initializers drop a leading byte order mark (fixBOM() in
-  // libs-base's GSString.m), but a String keeps a leading U+FEFF, so give
-  // them a second one to drop.
-  const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
-  char *withBOM = nullptr;
-  if (count >= 3 && memcmp(bytes, bom, sizeof(bom)) == 0) {
-    withBOM = static_cast<char *>(malloc(count + sizeof(bom)));
-    memcpy(withBOM, bom, sizeof(bom));
-    memcpy(withBOM + sizeof(bom), bytes, count);
-    bytes = withBOM;
-    count += sizeof(bom);
-  }
-
   const unsigned long NSUTF8StringEncoding = 4;
   id string = ((id(*)(id, SEL))objc_msgSend)(nsString, @selector(alloc));
+
+  // GNUstep's initializers drop a leading byte order mark (fixBOM() in
+  // libs-base's GSString.m), but a String keeps a leading U+FEFF.
+  // -initWithBytes:length:encoding: drops up to two of them, because it
+  // calls fixBOM() and then -initWithBytesNoCopy:length:encoding:freeWhenDone:,
+  // which calls it again.  Give the latter, which drops exactly one, a copy
+  // with a second byte order mark to drop.  It takes ownership of the copy.
+  const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+  if (count >= 3 && memcmp(bytes, bom, sizeof(bom)) == 0) {
+    char *withBOM = static_cast<char *>(malloc(count + sizeof(bom)));
+    memcpy(withBOM, bom, sizeof(bom));
+    memcpy(withBOM + sizeof(bom), bytes, count);
+    return ((id(*)(id, SEL, void *, unsigned long, unsigned long, signed char))
+                objc_msgSend)(
+        string, @selector(initWithBytesNoCopy:length:encoding:freeWhenDone:),
+        withBOM, (unsigned long)(count + sizeof(bom)), NSUTF8StringEncoding,
+        /*YES*/ 1);
+  }
+
   string = ((id(*)(id, SEL, const void *, unsigned long, unsigned long))
                 objc_msgSend)(string, @selector(initWithBytes:length:encoding:),
                               bytes ? bytes : "", (unsigned long)count,
                               NSUTF8StringEncoding);
-  free(withBOM);
   return string;
 }
 #endif
