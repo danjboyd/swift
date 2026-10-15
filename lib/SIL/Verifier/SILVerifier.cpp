@@ -6154,10 +6154,8 @@ public:
     require(classTy.isObject(), "objc_protocol must produce a value");
     auto classDecl = classTy.getClassOrBoundGenericClass();
     require(classDecl, "objc_protocol must produce a class instance");
-    require(classDecl->getName() == F.getASTContext().Id_Protocol,
-            "objc_protocol must produce an instance of ObjectiveC.Protocol class");
-    require(classDecl->getModuleContext()->getName() == F.getASTContext().Id_ObjectiveC,
-            "objc_protocol must produce an instance of ObjectiveC.Protocol class");
+    require(classDecl->isObjCProtocolClass(),
+            "objc_protocol must produce an instance of the Protocol class");
   }
   
   void checkObjCMetatypeToObjectInst(ObjCMetatypeToObjectInst *OMOI) {

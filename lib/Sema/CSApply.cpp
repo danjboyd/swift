@@ -7884,9 +7884,7 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
     
     if (auto toClass = toType->getClassOrBoundGenericClass()) {
-      if (toClass->getName() == ctx.Id_Protocol
-          && toClass->getModuleContext()->getName()
-              == ctx.Id_ObjectiveC) {
+      if (toClass->isObjCProtocolClass()) {
         assert(ctx.LangOpts.EnableObjCInterop
                && "metatype-to-object conversion requires objc interop");
         assert(fromMeta->is<MetatypeType>()

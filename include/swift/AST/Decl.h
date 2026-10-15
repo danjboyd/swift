@@ -5344,6 +5344,10 @@ public:
   /// Is this the NSObject class type?
   bool isNSObject() const;
 
+  /// Is this the Objective-C \c Protocol class, the type of the value a
+  /// single @objc protocol metatype converts to?
+  bool isObjCProtocolClass() const;
+
   /// Whether the class directly inherits from NSObject but should use
   /// Swift's native object model.
   bool isNativeNSObjectSubclass() const;

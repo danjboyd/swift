@@ -1,0 +1,4 @@
+module GNUstepNSObject {
+  header "NSObject.h"
+  export *
+}

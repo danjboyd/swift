@@ -12283,6 +12283,28 @@ bool ClassDecl::isNSObject() const {
           getModuleContext()->getName().is("SwiftFoundation"));
 }
 
+bool ClassDecl::isObjCProtocolClass() const {
+  ASTContext &ctx = getASTContext();
+  if (getName() != ctx.Id_Protocol)
+    return false;
+  if (getModuleContext()->getName() == ctx.Id_ObjectiveC)
+    return true;
+
+  // The Clang importer declares Clang's Protocol class as a runtime-only
+  // class in the module that declares NSObject.  That is the ObjectiveC
+  // module where NSObject comes from the Objective-C runtime's headers, but
+  // not where it comes from elsewhere, as from Foundation/NSObject.h on
+  // GNUstep.
+  if (getForeignClassKind() != ForeignKind::RuntimeOnly)
+    return false;
+  auto *clangClass =
+      dyn_cast_or_null<clang::ObjCInterfaceDecl>(getClangDecl());
+  if (!clangClass)
+    return false;
+  return clangClass->getCanonicalDecl() ==
+         clangClass->getASTContext().getObjCProtocolDecl()->getCanonicalDecl();
+}
+
 Type ClassDecl::getSuperclass() const {
   ASTContext &ctx = getASTContext();
   return evaluateOrDefault(ctx.evaluator,

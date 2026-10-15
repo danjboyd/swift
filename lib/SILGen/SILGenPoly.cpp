@@ -457,12 +457,7 @@ RValue Transform::transform(RValue &&input,
 // Protocol class type.
 static bool isProtocolClass(Type t) {
   auto classDecl = t->getClassOrBoundGenericClass();
-  if (!classDecl)
-    return false;
-
-  ASTContext &ctx = classDecl->getASTContext();
-  return (classDecl->getName() == ctx.Id_Protocol &&
-          classDecl->getModuleContext()->getName() == ctx.Id_ObjectiveC);
+  return classDecl && classDecl->isObjCProtocolClass();
 }
 
 static ManagedValue emitManagedLoad(SILGenFunction &SGF, SILLocation loc,
