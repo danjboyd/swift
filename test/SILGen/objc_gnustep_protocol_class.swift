@@ -25,7 +25,7 @@ public func coercion() -> Protocol {
 
 // CHECK-LABEL: sil [ossa] @$s27objc_gnustep_protocol_class8argument{{.*}} : $@convention(thin)
 // CHECK-DAG: objc_protocol #NSCoding : $Protocol
-// CHECK-DAG: function_ref @class_conformsToProtocol
+// CHECK-DAG: function_ref @$sSo24class_conformsToProtocol{{.*}}FTo : $@convention(c)
 // CHECK: } // end sil function
 public func argument(_ cls: AnyClass) -> Int32 {
   return class_conformsToProtocol(cls, NSCoding.self)
