@@ -15,10 +15,12 @@ public class Sub: Root {
   public override class func reset() { super.reset() }
 }
 
-// CHECK-LABEL: define {{.*}} @"$s31objc_gnustep_class_method_super3SubC5resetyyFZ"(
+// CHECK-LABEL: define {{.*}} @"$s31objc_gnustep_class_method_super3SubC5resetyyFZ"(ptr swiftself %0)
+// CHECK: [[RECEIVER:%.*]] = call ptr @swift_getObjCClassFromMetadata(ptr %0)
 // CHECK: [[ROOT:%.*]] = load ptr, ptr @._OBJC_REF_CLASS_Root
 // CHECK: [[CLASS:%.*]] = call ptr @swift_getObjCClassFromMetadata(ptr [[ROOT]])
 // CHECK: [[METACLASS:%.*]] = load ptr, ptr [[CLASS]]
+// CHECK: store ptr [[RECEIVER]], ptr
 // CHECK: store ptr [[METACLASS]], ptr
 // CHECK: [[SEL:%.*]] = call ptr @sel_registerName(ptr @"\01L_selector_data(reset)")
 // CHECK: call ptr @objc_msg_lookup_super(ptr %objc_super, ptr [[SEL]])
@@ -29,9 +31,14 @@ public class SubSub: Sub {
   public override class func reset() { super.reset() }
 }
 
-// CHECK-LABEL: define {{.*}} @"$s31objc_gnustep_class_method_super6SubSubC5resetyyFZ"(
+// CHECK-LABEL: define {{.*}} @"$s31objc_gnustep_class_method_super03SubF0C5resetyyFZ"(ptr swiftself %0)
 // CHECK-NOT: @._OBJC_REF_CLASS_Root
-// CHECK: [[CLASS:%.*]] = call ptr @swift_getObjCClassFromMetadata(ptr
+// CHECK: [[RECEIVER:%.*]] = call ptr @swift_getObjCClassFromMetadata(ptr %0)
+// CHECK-NOT: @._OBJC_REF_CLASS_Root
+// CHECK: [[RESPONSE:%.*]] = call swiftcc %swift.metadata_response @"$s31objc_gnustep_class_method_super3SubCMa"(
+// CHECK: [[SUPER:%.*]] = extractvalue %swift.metadata_response [[RESPONSE]], 0
+// CHECK: [[CLASS:%.*]] = call ptr @swift_getObjCClassFromMetadata(ptr [[SUPER]])
 // CHECK: [[METACLASS:%.*]] = load ptr, ptr [[CLASS]]
+// CHECK: store ptr [[RECEIVER]], ptr
 // CHECK: store ptr [[METACLASS]], ptr
 // CHECK: call ptr @objc_msg_lookup_super(ptr %objc_super,
