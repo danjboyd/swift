@@ -356,26 +356,33 @@ IRGenModule::getObjCProtocolGlobalVars(ProtocolDecl *proto) {
                              llvm::GlobalValue::PrivateLinkage, nullptr);
   LazyObjCProtocolDefinitions.push_back(proto);
 
-  // Introduce a variable to label the protocol.
   llvm::SmallString<64> nameBuffer;
   StringRef protocolName = proto->getObjCRuntimeName(nameBuffer);
-  auto *protocolLabel
-    = new llvm::GlobalVariable(Module, Int8PtrTy,
-                               /*constant*/ false,
-                               llvm::GlobalValue::WeakAnyLinkage,
-                               protocolRecord,
-                               llvm::Twine("\01l_OBJC_LABEL_PROTOCOL_$_")
-                                 + protocolName);
-  protocolLabel->setAlignment(
-      llvm::MaybeAlign(getPointerAlignment().getValue()));
-  protocolLabel->setVisibility(llvm::GlobalValue::HiddenVisibility);
-  protocolLabel->setSection(GetObjCSectionName("__objc_protolist",
-                                               "coalesced,no_dead_strip"));
 
-  // Mark used to prevent DCE of public unreferenced protocols to ensure
-  // that they are available for external use when a used module is used
-  // as a library.
-  addUsedGlobal(protocolLabel);
+  // The GNUstep runtime registers the protocol records Clang emits into
+  // __objc_protocols and does not read __objc_protolist, so there is no need
+  // for a label there.
+  bool usesGNUstepRuntime = Context.LangOpts.usesGNUstepObjCRuntime();
+  if (!usesGNUstepRuntime) {
+    // Introduce a variable to label the protocol.
+    auto *protocolLabel
+      = new llvm::GlobalVariable(Module, Int8PtrTy,
+                                 /*constant*/ false,
+                                 llvm::GlobalValue::WeakAnyLinkage,
+                                 protocolRecord,
+                                 llvm::Twine("\01l_OBJC_LABEL_PROTOCOL_$_")
+                                   + protocolName);
+    protocolLabel->setAlignment(
+        llvm::MaybeAlign(getPointerAlignment().getValue()));
+    protocolLabel->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    protocolLabel->setSection(GetObjCSectionName("__objc_protolist",
+                                                 "coalesced,no_dead_strip"));
+
+    // Mark used to prevent DCE of public unreferenced protocols to ensure
+    // that they are available for external use when a used module is used
+    // as a library.
+    addUsedGlobal(protocolLabel);
+  }
 
   // Introduce a variable to reference the protocol.
   auto *protocolRef =
@@ -385,8 +392,21 @@ IRGenModule::getObjCProtocolGlobalVars(ProtocolDecl *proto) {
                                llvm::Twine("\01l_OBJC_PROTOCOL_REFERENCE_$_") + protocolName);
   protocolRef->setAlignment(llvm::MaybeAlign(getPointerAlignment().getValue()));
   protocolRef->setVisibility(llvm::GlobalValue::HiddenVisibility);
-  protocolRef->setSection(GetObjCSectionName("__objc_protorefs",
-                                             "coalesced,no_dead_strip"));
+
+  // When the GNUstep runtime loads an image, it replaces each reference in
+  // __objc_protocol_refs with the protocol it registered under the name in
+  // the referenced record, the protocol objc_getProtocol() returns, as it
+  // does for the references Clang emits.  That needs a GNUstep protocol
+  // record that the runtime has registered, which Clang emits for a protocol
+  // declared in Objective-C; the record emitted for a protocol declared in
+  // Swift is not registered, so its references stay in __objc_protorefs.
+  bool hasGNUstepProtocolRecord =
+      usesGNUstepRuntime &&
+      isa_and_nonnull<clang::ObjCProtocolDecl>(proto->getClangDecl());
+  protocolRef->setSection(
+      hasGNUstepProtocolRecord
+          ? GetObjCSectionName("__objc_protocol_refs", "")
+          : GetObjCSectionName("__objc_protorefs", "coalesced,no_dead_strip"));
 
   // Mark used to prevent DCE of public unreferenced protocols to ensure
   // that they are available for external use when a used module is used
