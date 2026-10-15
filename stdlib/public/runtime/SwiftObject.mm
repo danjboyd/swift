@@ -112,6 +112,25 @@ static Class _swift_getObjCClassOfAllocated(const void *object) {
   return class_const_cast(_swift_getClassOfAllocated(object));
 }
 
+/// Fetch the class an Objective-C object reports with -class, which ignores
+/// dynamic subclasses such as those introduced by KVO.  For a class object
+/// this is the class itself.
+static Class objcObjectFormalClass(id objcObject) {
+#if defined(__GNUSTEP_RUNTIME__)
+  // Not every object responds to -class under the GNUstep runtime: Protocol
+  // descends from the root class Object, which has no methods, rather than
+  // from NSObject, and sending a protocol a message it does not implement
+  // aborts.  Such an object has no dynamic subclass to look through, so its
+  // isa is its class.  class_respondsToSelector() does not initialize the
+  // class; it can miss -class only for a class that has not received a
+  // message yet, which also has no dynamic subclass.
+  Class isa = object_getClass(objcObject);
+  if (!class_respondsToSelector(isa, @selector(class)))
+    return class_isMetaClass(isa) ? reinterpret_cast<Class>(objcObject) : isa;
+#endif
+  return [objcObject class];
+}
+
 /// Fetch the ObjC class object associated with the formal dynamic
 /// type of the given (possibly Objective-C) object.  The formal
 /// dynamic type ignores dynamic subclasses such as those introduced
@@ -123,6 +142,7 @@ const ClassMetadata *swift::swift_getObjCClassFromObject(HeapObject *object) {
 
   // Walk up the superclass chain skipping over artificial Swift classes.
   // If we find a non-Swift class use the result of [object class] instead.
+  // See objcObjectFormalClass().
 
   while (classAsMetadata && classAsMetadata->isTypeMetadata()) {
     if (!classAsMetadata->isArtificialSubclass())
@@ -131,7 +151,7 @@ const ClassMetadata *swift::swift_getObjCClassFromObject(HeapObject *object) {
   }
 
   id objcObject = reinterpret_cast<id>(object);
-  Class objcClass = [objcObject class];
+  Class objcClass = objcObjectFormalClass(objcObject);
   if (objcObjectIsClass(objcObject)) {
     // Original object is a class. We want a
     // metaclass but +class doesn't give that to us.
@@ -154,6 +174,7 @@ const Metadata *swift::swift_getObjectType(HeapObject *object) {
 #if SWIFT_OBJC_INTEROP
   // Walk up the superclass chain skipping over artificial Swift classes.
   // If we find a non-Swift class use the result of [object class] instead.
+  // See objcObjectFormalClass().
 
   while (classAsMetadata && classAsMetadata->isTypeMetadata()) {
     if (!classAsMetadata->isArtificialSubclass())
@@ -162,7 +183,7 @@ const Metadata *swift::swift_getObjectType(HeapObject *object) {
   }
 
   id objcObject = reinterpret_cast<id>(object);
-  Class objcClass = [objcObject class];
+  Class objcClass = objcObjectFormalClass(objcObject);
   if (objcObjectIsClass(objcObject)) {
     // Original object is a class. We want a
     // metaclass but +class doesn't give that to us.
