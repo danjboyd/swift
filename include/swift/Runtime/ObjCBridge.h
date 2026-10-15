@@ -111,6 +111,16 @@ void swift_rootObjCDealloc(HeapObject *self);
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_API
 id swift_stdlib_NSStringFromUTF8(const char *cstr, int len);
 
+#if defined(__GNUSTEP_RUNTIME__)
+// Creates a GNUstep NSString, +1, from UTF-8 for the standard library's
+// String bridging.  Under the GNUstep runtime the standard library's own
+// string classes cannot stand in for NSString.  Each byte, including a
+// leading byte order mark, is kept.
+SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
+id swift_stdlib_gnustep_createNSStringFromUTF8(const char *bytes,
+                                               intptr_t count);
+#endif
+
 }
 
 #endif // SWIFT_OBJC_INTEROP

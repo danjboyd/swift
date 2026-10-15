@@ -220,21 +220,33 @@ Class _swift_classOfObjCHeapObject(OpaqueValue *value) {
 }
 
 #if defined(__GNUSTEP_RUNTIME__)
-/// Create a GNUstep NSString, +1, from UTF-8 for the standard library's
-/// String bridging, or return nil if NSString is not loaded.  The standard
-/// library's own string classes cannot stand in for NSString under the
-/// GNUstep runtime.
-SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
-id swift_gnustep_createNSStringFromUTF8(const char *bytes, intptr_t count) {
+id swift::swift_stdlib_gnustep_createNSStringFromUTF8(const char *bytes,
+                                                      intptr_t count) {
   Class nsString = objc_lookUpClass("NSString");
   if (!nsString)
-    return nil;
+    swift::fatalError(0, "NSString is not loaded; cannot bridge a String\n");
+
+  // GNUstep's initializers drop a leading byte order mark (fixBOM() in
+  // libs-base's GSString.m), but a String keeps a leading U+FEFF, so give
+  // them a second one to drop.
+  const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+  char *withBOM = nullptr;
+  if (count >= 3 && memcmp(bytes, bom, sizeof(bom)) == 0) {
+    withBOM = static_cast<char *>(malloc(count + sizeof(bom)));
+    memcpy(withBOM, bom, sizeof(bom));
+    memcpy(withBOM + sizeof(bom), bytes, count);
+    bytes = withBOM;
+    count += sizeof(bom);
+  }
+
   const unsigned long NSUTF8StringEncoding = 4;
   id string = ((id(*)(id, SEL))objc_msgSend)(nsString, @selector(alloc));
-  return ((id(*)(id, SEL, const void *, unsigned long, unsigned long))
-              objc_msgSend)(string, @selector(initWithBytes:length:encoding:),
-                            bytes ? bytes : "", (unsigned long)count,
-                            NSUTF8StringEncoding);
+  string = ((id(*)(id, SEL, const void *, unsigned long, unsigned long))
+                objc_msgSend)(string, @selector(initWithBytes:length:encoding:),
+                              bytes ? bytes : "", (unsigned long)count,
+                              NSUTF8StringEncoding);
+  free(withBOM);
+  return string;
 }
 #endif
 

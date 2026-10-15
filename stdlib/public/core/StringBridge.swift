@@ -624,11 +624,13 @@ private func _createCFString(
 // stand in for NSString: they are not registered with the Objective-C
 // runtime as NSString subclasses, and Swift cannot form the tagged pointer
 // strings of Apple's Foundation.  Bridging makes a GNUstep NSString instead.
-// The runtime returns nil when NSString is not loaded.
-@_silgen_name("swift_gnustep_createNSStringFromUTF8")
-internal func _swift_gnustep_createNSStringFromUTF8(
+// This messages Objective-C (+alloc, -initWithBytes:length:encoding:) but
+// releases nothing the caller can see, so `releasenone` still holds for
+// _bridgeToObjectiveCImpl().
+@_silgen_name("swift_stdlib_gnustep_createNSStringFromUTF8")
+internal func _swift_stdlib_gnustep_createNSStringFromUTF8(
   _ bytes: UnsafePointer<UInt8>?, _ count: Int
-) -> AnyObject?
+) -> AnyObject
 #endif
 
 #if !$Embedded
@@ -644,13 +646,11 @@ extension String {
       return _guts._object.objCBridgeableObject
     }
     var contiguous = self
-    if let result = contiguous.withUTF8({ buffer in
-      unsafe _swift_gnustep_createNSStringFromUTF8(
+    return contiguous.withUTF8 { buffer in
+      unsafe _swift_stdlib_gnustep_createNSStringFromUTF8(
         buffer.baseAddress, buffer.count)
-    }) {
-      return result
     }
-#endif
+#else
 
     _connectOrphanedFoundationSubclassesIfNeeded()
 
@@ -693,6 +693,7 @@ extension String {
     _internalInvariant(_guts._object.hasObjCBridgeableObject,
       "Unknown non-bridgeable object case")
     return _guts._object.objCBridgeableObject
+#endif
   }
 }
 

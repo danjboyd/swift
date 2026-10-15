@@ -32,6 +32,14 @@ let empty = ""._bridgeToObjectiveCImpl()
 // CHECK-NEXT: true true
 print(isNSString(empty), utf8(empty).isEmpty)
 
+// A leading byte order mark is part of the string, and is kept.
+let withBOM = "\u{FEFF}abc"._bridgeToObjectiveCImpl()
+// CHECK-NEXT: true true
+print(isNSString(withBOM), utf8(withBOM) == "\u{FEFF}abc")
+let onlyBOM = "\u{FEFF}"._bridgeToObjectiveCImpl()
+// CHECK-NEXT: true true
+print(isNSString(onlyBOM), utf8(onlyBOM) == "\u{FEFF}")
+
 // A Swift value given to Objective-C is boxed, and the box describes the
 // value with an NSString.
 struct Point { var x: Int; var y: Int }
