@@ -57,6 +57,7 @@ bool swift::writeTBD(ModuleDecl *M, StringRef OutputFilename,
 static bool validateSymbols(DiagnosticEngine &diags,
                             const std::vector<std::string> &symbols,
                             const llvm::Module &IRModule,
+                            bool gnustepObjCRuntime,
                             bool diagnoseExtraSymbolsInTBD) {
   llvm::StringSet<> symbolSet;
   symbolSet.insert(symbols.begin(), symbols.end());
@@ -85,6 +86,15 @@ static bool validateSymbols(DiagnosticEngine &diags,
       auto externallyVisible =
           (GV->hasExternalLinkage() || GV->hasCommonLinkage())
         && !GV->hasHiddenVisibility();
+      // Under the GNUstep runtime, Clang emits the record of each imported
+      // Objective-C protocol that the module uses, as it does in every
+      // Objective-C object file that uses it: a public definition in a COMDAT
+      // of the same name, which the linker keeps one of.  Those records belong
+      // to the protocol's own module, not to this module's API.  (Apple's
+      // runtime gets weak hidden records.)
+      if (gnustepObjCRuntime && GV->hasComdat() &&
+          unmangledName.starts_with("._OBJC_PROTOCOL_"))
+        externallyVisible = false;
       if (!GV->isDeclaration() && externallyVisible) {
         // Is it listed?
         if (!symbolSet.erase(name))
@@ -127,6 +137,7 @@ bool swift::validateTBD(ModuleDecl *M,
                         bool diagnoseExtraSymbolsInTBD) {
   auto symbols = getPublicSymbols(TBDGenDescriptor::forModule(M, opts));
   return validateSymbols(M->getASTContext().Diags, symbols, IRModule,
+                         M->getASTContext().LangOpts.usesGNUstepObjCRuntime(),
                          diagnoseExtraSymbolsInTBD);
 }
 
@@ -135,6 +146,8 @@ bool swift::validateTBD(FileUnit *file,
                         const TBDGenOptions &opts,
                         bool diagnoseExtraSymbolsInTBD) {
   auto symbols = getPublicSymbols(TBDGenDescriptor::forFile(file, opts));
-  return validateSymbols(file->getParentModule()->getASTContext().Diags,
-                         symbols, IRModule, diagnoseExtraSymbolsInTBD);
+  auto &ctx = file->getParentModule()->getASTContext();
+  return validateSymbols(ctx.Diags, symbols, IRModule,
+                         ctx.LangOpts.usesGNUstepObjCRuntime(),
+                         diagnoseExtraSymbolsInTBD);
 }
