@@ -1560,10 +1560,34 @@ Class swift::swift_getInitializedObjCClass(Class c) {
   return c;
 }
 
+/// Whether the class \p source is \p dest or a subclass of it, as
+/// +[NSObject isSubclassOfClass:] answers.
+static bool objcClassIsSubclassOfClass(const ClassMetadata *source,
+                                       const ClassMetadata *dest) {
+#if defined(__GNUSTEP_RUNTIME__)
+  // Under the GNUstep runtime, a Swift class exposed to Objective-C has a
+  // class record that is separate from its Swift metadata, and either may be
+  // passed here: the casts in Casting.cpp pass the metadata of a Swift class.
+  // libobjc2 cannot interpret Swift metadata as a class, so do not message
+  // it; walk the superclass chain of the metadata instead, as
+  // swift_dynamicCastObjCClass() does.
+  const Metadata *targetMetadata = swift_getObjCClassMetadata(dest);
+  for (auto currentType = swift_getObjCClassMetadata(source);
+       currentType != nullptr;
+       currentType = _swift_class_getSuperclass(currentType)) {
+    if (currentType == targetMetadata)
+      return true;
+  }
+  return false;
+#else
+  return [class_const_cast(source) isSubclassOfClass:class_const_cast(dest)];
+#endif
+}
+
 static const ClassMetadata *
 swift_dynamicCastObjCClassMetatypeImpl(const ClassMetadata *source,
                                        const ClassMetadata *dest) {
-  if ([class_const_cast(source) isSubclassOfClass:class_const_cast(dest)])
+  if (objcClassIsSubclassOfClass(source, dest))
     return source;
   return nil;
 }
@@ -1573,7 +1597,7 @@ swift_dynamicCastObjCClassMetatypeUnconditionalImpl(const ClassMetadata *source,
                                                     const ClassMetadata *dest,
                                                     const char *filename,
                                                     unsigned line, unsigned column) {
-  if ([class_const_cast(source) isSubclassOfClass:class_const_cast(dest)])
+  if (objcClassIsSubclassOfClass(source, dest))
     return source;
 
   swift_dynamicCastFailure(source, dest);
