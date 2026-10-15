@@ -1,0 +1,4 @@
+module GNUstepGenericClass {
+  header "Tagged.h"
+  export *
+}

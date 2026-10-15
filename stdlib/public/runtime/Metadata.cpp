@@ -4305,6 +4305,155 @@ static void initObjCClass(ClassMetadata *self,
   }
 }
 
+#if defined(__GNUSTEP_RUNTIME__)
+namespace {
+  /// The GNUstep runtime's method list, which IRGen emits in the RO-data of
+  /// a class and its metaclass under that runtime.  Each selector points at
+  /// a selector record that the runtime registered when it loaded the image.
+  struct GNUstepMethod {
+    IMP Imp;
+    SEL Selector;
+    const char *Types;
+  };
+
+  struct GNUstepMethodList {
+    GNUstepMethodList *Next;
+    int Count;
+    size_t EntrySize;
+
+    const GNUstepMethod *getMethod(int i) const {
+      return reinterpret_cast<const GNUstepMethod *>(
+          reinterpret_cast<const char *>(this + 1) + i * EntrySize);
+    }
+  };
+
+  /// The GNUstep runtime's protocol list, as IRGen emits it in RO-data.
+  struct GNUstepProtocolList {
+    GNUstepProtocolList *Next;
+    size_t Count;
+
+    Protocol *getProtocol(size_t i) const {
+      return reinterpret_cast<Protocol *const *>(this + 1)[i];
+    }
+  };
+} // end anonymous namespace
+
+/// The class record that the GNUstep runtime knows for the superclass of a
+/// generic class, or Nil if the class has no Objective-C ancestry.
+static Class getGNUstepObjCSuperclassRecord(const ClassMetadata *self) {
+  const ClassMetadata *super = self->Superclass;
+  if (!super || super == getRootSuperclass())
+    return Nil;
+
+  // A Swift superclass with Objective-C ancestry has a class record of its
+  // own: emitted by the compiler and registered when its image was loaded,
+  // or, for a generic class, created when its metadata was initialized.
+  if (super->isTypeMetadata())
+    return (Class)const_cast<ClassMetadata *>(
+        getRegisteredGNUstepObjCClassRecord(super));
+
+  return (Class)const_cast<ClassMetadata *>(super);
+}
+
+static void addGNUstepObjCMethods(Class cls, const void *methodList) {
+  for (auto list = static_cast<const GNUstepMethodList *>(methodList); list;
+       list = list->Next) {
+    for (int i = 0; i != list->Count; ++i) {
+      const GNUstepMethod *method = list->getMethod(i);
+      if (method->Imp && method->Selector)
+        class_addMethod(cls, method->Selector, method->Imp, method->Types);
+    }
+  }
+}
+
+/// Under the GNUstep runtime, create and register a class record for an
+/// instantiation of a generic class with Objective-C ancestry, the
+/// counterpart of the record the compiler emits for a non-generic class.
+/// The runtime does not accept Swift metadata as a class, so without a
+/// record the class cannot be allocated or messaged.
+///
+/// The record has the Swift class's ivars, instance and class methods and
+/// protocols, from the RO-data of the class and its metaclass.  The runtime
+/// lays out the ivars after its superclass's; their offsets replace the
+/// ones in \p fieldOffsets, as the Apple runtime slides them.
+static void registerGNUstepGenericObjCClass(ClassMetadata *self,
+                                            size_t numFields,
+                                            size_t *fieldOffsets) {
+  Class superclass = getGNUstepObjCSuperclassRecord(self);
+  if (!superclass)
+    return;
+
+  ClassROData *rodata = getROData(self);
+  Class cls = objc_allocateClassPair(superclass, rodata->Name, 0);
+  if (!cls) {
+    // The name is taken; fall back to a unique one.
+    cls = objc_allocateClassPair(superclass, copyEmergencyName(self), 0);
+    if (!cls)
+      return;
+  }
+
+  // Add the ivars in order, recording the name each was added under: a
+  // name that an ancestor's ivar already has is made unique.
+  const char *inlineIvarNames[8];
+  const char **ivarNames = inlineIvarNames;
+  if (numFields > 8)
+    ivarNames = static_cast<const char **>(
+        calloc(numFields, sizeof(const char *)));
+  const ClassIvarList *ivars = rodata->IvarList;
+  for (unsigned i = 0; i != numFields; ++i) {
+    const ClassIvarEntry &ivar = ivars->getIvars()[i];
+    const char *type = ivar.Type ? ivar.Type : "";
+    const char *name = ivar.Name;
+    if (!class_addIvar(cls, name, ivar.Size, ivar.Log2Alignment, type)) {
+      char *uniqueName = nullptr;
+      swift_asprintf(&uniqueName, "%s$%u", ivar.Name, i);
+      name = uniqueName;
+      if (!class_addIvar(cls, name, ivar.Size, ivar.Log2Alignment, type))
+        fatalError(0, "could not add ivar %s to class %s\n", ivar.Name,
+                   class_getName(cls));
+    }
+    ivarNames[i] = name;
+  }
+
+  addGNUstepObjCMethods(cls, rodata->MethodList);
+  auto metaclass = reinterpret_cast<ObjCClass *>(self)->Isa;
+  addGNUstepObjCMethods(object_getClass((id)cls),
+                        getROData(metaclass)->MethodList);
+
+  for (auto list =
+           static_cast<const GNUstepProtocolList *>(rodata->ProtocolList);
+       list; list = list->Next) {
+    for (size_t i = 0; i != list->Count; ++i) {
+      // The runtime merges protocol records by name when it loads them;
+      // add the one it knows.
+      Protocol *protocol = list->getProtocol(i);
+      if (Protocol *known = objc_getProtocol(protocol_getName(protocol)))
+        protocol = known;
+      class_addProtocol(cls, protocol);
+    }
+  }
+
+  objc_registerClassPair(cls);
+
+  // Use the runtime's ivar layout, which instances it allocates have.
+  for (unsigned i = 0; i != numFields; ++i) {
+    Ivar ivar = class_getInstanceVariable(cls, ivarNames[i]);
+    assert(ivar && "registered class lost an ivar");
+    fieldOffsets[i] = ivar_getOffset(ivar);
+  }
+  if (ivarNames != inlineIvarNames)
+    free(ivarNames);
+
+  size_t instanceSize = class_getInstanceSize(cls);
+  if (self->getInstanceSize() != instanceSize)
+    self->setInstanceSize(instanceSize);
+  if (rodata->InstanceSize != instanceSize)
+    rodata->InstanceSize = instanceSize;
+
+  swift_registerGNUstepObjCClassMetadata(cls, self);
+}
+#endif
+
 /// Generic classes only. Initialize the Objective-C ivar descriptors and field
 /// offset globals and register the class with the runtime.
 ///
@@ -4400,7 +4549,11 @@ initGenericObjCClass(ClassMetadata *self, size_t numFields,
 
   // Register this class with the runtime. This will also cause the
   // runtime to slide the entries in the field offset vector.
+#if defined(__GNUSTEP_RUNTIME__)
+  registerGNUstepGenericObjCClass(self, numFields, fieldOffsets);
+#else
   swift_instantiateObjCClass(self);
+#endif
 
   // If we saved any global ivar offsets, make sure we write back to them.
   if (_globalIvarOffsets) {
