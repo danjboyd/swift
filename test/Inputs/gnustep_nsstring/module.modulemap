@@ -1,0 +1,4 @@
+module GNUstepNSString {
+  header "NSString.h"
+  export *
+}

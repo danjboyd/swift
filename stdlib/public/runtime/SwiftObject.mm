@@ -219,6 +219,25 @@ Class _swift_classOfObjCHeapObject(OpaqueValue *value) {
   return _swift_getObjCClassOfAllocated(value);
 }
 
+#if defined(__GNUSTEP_RUNTIME__)
+/// Create a GNUstep NSString, +1, from UTF-8 for the standard library's
+/// String bridging, or return nil if NSString is not loaded.  The standard
+/// library's own string classes cannot stand in for NSString under the
+/// GNUstep runtime.
+SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
+id swift_gnustep_createNSStringFromUTF8(const char *bytes, intptr_t count) {
+  Class nsString = objc_lookUpClass("NSString");
+  if (!nsString)
+    return nil;
+  const unsigned long NSUTF8StringEncoding = 4;
+  id string = ((id(*)(id, SEL))objc_msgSend)(nsString, @selector(alloc));
+  return ((id(*)(id, SEL, const void *, unsigned long, unsigned long))
+              objc_msgSend)(string, @selector(initWithBytes:length:encoding:),
+                            bytes ? bytes : "", (unsigned long)count,
+                            NSUTF8StringEncoding);
+}
+#endif
+
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_API
 id swift_stdlib_getDescription(OpaqueValue *value,
                                       const Metadata *type);

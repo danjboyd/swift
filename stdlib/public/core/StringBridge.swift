@@ -619,11 +619,38 @@ private func _createCFString(
   )
 }
 
+#if _runtime(_ObjC) && os(Linux)
+// Under the GNUstep runtime, the standard library's string classes cannot
+// stand in for NSString: they are not registered with the Objective-C
+// runtime as NSString subclasses, and Swift cannot form the tagged pointer
+// strings of Apple's Foundation.  Bridging makes a GNUstep NSString instead.
+// The runtime returns nil when NSString is not loaded.
+@_silgen_name("swift_gnustep_createNSStringFromUTF8")
+internal func _swift_gnustep_createNSStringFromUTF8(
+  _ bytes: UnsafePointer<UInt8>?, _ count: Int
+) -> AnyObject?
+#endif
+
 #if !$Embedded
 extension String {
   @_effects(releasenone)
   public // SPI(Foundation)
   func _bridgeToObjectiveCImpl() -> AnyObject {
+
+#if _runtime(_ObjC) && os(Linux)
+    // A string that came from Objective-C bridges back to its object.
+    if !_guts.isSmall && _guts._object.largeIsCocoa &&
+       _guts._object.hasObjCBridgeableObject {
+      return _guts._object.objCBridgeableObject
+    }
+    var contiguous = self
+    if let result = contiguous.withUTF8({ buffer in
+      unsafe _swift_gnustep_createNSStringFromUTF8(
+        buffer.baseAddress, buffer.count)
+    }) {
+      return result
+    }
+#endif
 
     _connectOrphanedFoundationSubclassesIfNeeded()
 
