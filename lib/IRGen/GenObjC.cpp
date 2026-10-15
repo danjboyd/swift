@@ -359,9 +359,9 @@ IRGenModule::getObjCProtocolGlobalVars(ProtocolDecl *proto) {
   llvm::SmallString<64> nameBuffer;
   StringRef protocolName = proto->getObjCRuntimeName(nameBuffer);
 
-  // The GNUstep runtime registers the protocol records Clang emits into
-  // __objc_protocols and does not read __objc_protolist, so there is no need
-  // for a label there.
+  // The GNUstep runtime registers the protocol records in __objc_protocols,
+  // where both Clang and Swift put them, and does not read __objc_protolist,
+  // so there is no need for a label there.
   bool usesGNUstepRuntime = Context.LangOpts.usesGNUstepObjCRuntime();
   if (!usesGNUstepRuntime) {
     // Introduce a variable to label the protocol.
@@ -396,15 +396,12 @@ IRGenModule::getObjCProtocolGlobalVars(ProtocolDecl *proto) {
   // When the GNUstep runtime loads an image, it replaces each reference in
   // __objc_protocol_refs with the protocol it registered under the name in
   // the referenced record, the protocol objc_getProtocol() returns, as it
-  // does for the references Clang emits.  That needs a GNUstep protocol
-  // record that the runtime has registered, which Clang emits for a protocol
-  // declared in Objective-C; the record emitted for a protocol declared in
-  // Swift is not registered, so its references stay in __objc_protorefs.
-  bool hasGNUstepProtocolRecord =
-      usesGNUstepRuntime &&
-      isa_and_nonnull<clang::ObjCProtocolDecl>(proto->getClangDecl());
+  // does for the references Clang emits.  The referenced record, whether
+  // Clang emits it for a protocol declared in Objective-C or Swift emits it
+  // for a protocol declared in Swift, is in __objc_protocols of the same
+  // image, so the runtime has registered it by then.
   protocolRef->setSection(
-      hasGNUstepProtocolRecord
+      usesGNUstepRuntime
           ? GetObjCSectionName("__objc_protocol_refs", "")
           : GetObjCSectionName("__objc_protorefs", "coalesced,no_dead_strip"));
 

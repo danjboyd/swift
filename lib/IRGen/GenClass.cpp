@@ -1545,13 +1545,16 @@ namespace {
     }
     
     llvm::Constant *emitProtocol() {
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime())
+        return emitGNUstepProtocol();
+
       ConstantInitBuilder builder(IGM);
       auto fields = builder.beginStruct();
       llvm::SmallString<64> nameBuffer;
       auto weakLinkage = llvm::GlobalVariable::WeakAnyLinkage;
 
       assert(isBuildingProtocol() && "not emitting a protocol");
-      
+
       // struct protocol_t {
       //   Class super;
       fields.addNullPointer(IGM.Int8PtrTy);
@@ -1600,6 +1603,80 @@ namespace {
       assert(fields.getNextOffsetFromGlobal() == size);
       return buildGlobalVariable(fields, "_PROTOCOL_", /*const*/ true,
                                  weakLinkage);
+    }
+
+    /// Under the GNUstep runtime, emit the protocol record in the layout of
+    /// the gnustep-2.0 ABI, the one Clang emits for a protocol declared in
+    /// Objective-C, into the __objc_protocols section.  When it loads the
+    /// image, the runtime registers each record in that section under its
+    /// name and sets its isa to the Protocol class.  It reads the section as
+    /// an array of records, so a record is exactly this structure.
+    llvm::Constant *emitGNUstepProtocol() {
+      assert(isBuildingProtocol() && "not emitting a protocol");
+
+      ConstantInitBuilder builder(IGM);
+      auto fields = builder.beginStruct();
+      auto weakLinkage = llvm::GlobalVariable::WeakAnyLinkage;
+
+      // struct objc_protocol {
+      //   id isa;
+      // Until the runtime loads the record, the isa is the version of its
+      // layout, protocol_version_gsv2.
+      const unsigned GNUstepV2ProtocolVersion = 4;
+      fields.add(llvm::ConstantExpr::getIntToPtr(
+          llvm::ConstantInt::get(IGM.IntPtrTy, GNUstepV2ProtocolVersion),
+          IGM.Int8PtrTy));
+      //   const char *name;
+      llvm::SmallString<64> nameBuffer;
+      fields.add(IGM.getAddrOfGlobalString(getEntityName(nameBuffer),
+                                           CStringSectionType::ObjCClassName));
+      //   struct objc_protocol_list *protocol_list;
+      fields.add(buildProtocolList(weakLinkage));
+      //   struct objc_protocol_method_description_list *instance_methods;
+      emitAndAddMethodList(fields, MethodListKind::InstanceMethods,
+                           weakLinkage);
+      //   struct objc_protocol_method_description_list *class_methods;
+      emitAndAddMethodList(fields, MethodListKind::ClassMethods, weakLinkage);
+      //   struct objc_protocol_method_description_list
+      //     *optional_instance_methods;
+      emitAndAddMethodList(fields, MethodListKind::OptionalInstanceMethods,
+                           weakLinkage);
+      //   struct objc_protocol_method_description_list
+      //     *optional_class_methods;
+      emitAndAddMethodList(fields, MethodListKind::OptionalClassMethods,
+                           weakLinkage);
+      //   struct objc_property_list *properties;
+      fields.add(buildGNUstepProtocolPropertyList(
+          InstanceProperties, /*optional*/ false, "_PROTOCOL_PROPERTIES_",
+          weakLinkage));
+      //   struct objc_property_list *optional_properties;
+      fields.add(buildGNUstepProtocolPropertyList(
+          InstanceProperties, /*optional*/ true, "_PROTOCOL_PROPERTIES_OPT_",
+          weakLinkage));
+      //   struct objc_property_list *class_properties;
+      fields.add(buildGNUstepProtocolPropertyList(
+          ClassProperties, /*optional*/ false, "_PROTOCOL_CLASS_PROPERTIES_",
+          weakLinkage));
+      //   struct objc_property_list *optional_class_properties;
+      fields.add(buildGNUstepProtocolPropertyList(
+          ClassProperties, /*optional*/ true,
+          "_PROTOCOL_CLASS_PROPERTIES_OPT_", weakLinkage));
+      // };
+      assert(fields.getNextOffsetFromGlobal() == 11 * IGM.getPointerSize());
+
+      // The runtime writes the isa, so the record is not constant.  Like
+      // Clang's records, it is in a COMDAT group, so that an image has one
+      // copy of it however many of its objects refer to the protocol.
+      llvm::SmallString<64> symbolBuffer;
+      auto *record = fields.finishAndCreateGlobal(
+          Twine("_PROTOCOL_") + getEntityName(symbolBuffer),
+          IGM.getPointerAlignment(), /*constant*/ false, weakLinkage);
+      record->setVisibility(llvm::GlobalValue::HiddenVisibility);
+      record->setExternallyInitialized(true);
+      record->setSection(IGM.GetObjCSectionName("__objc_protocols", ""));
+      if (IGM.Triple.supportsCOMDAT())
+        record->setComdat(IGM.Module.getOrInsertComdat(record->getName()));
+      return record;
     }
 
     void emitRODataFields(ConstantStructBuilder &b,
@@ -2017,6 +2094,9 @@ namespace {
                                     StringRef name,
                                     llvm::GlobalValue::LinkageTypes linkage) {
       if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
+        if (isBuildingProtocol())
+          return buildGNUstepProtocolMethodList(methods, name, linkage);
+
         if (methods.empty())
           return null();
 
@@ -2049,6 +2129,79 @@ namespace {
           [&](ConstantArrayBuilder &descriptors, MethodDescriptor descriptor) {
             buildMethod(descriptors, descriptor);
           });
+    }
+
+    /// Under the GNUstep runtime, the methods of a protocol are described by:
+    ///
+    /// struct objc_protocol_method_description_list {
+    ///   int count;
+    ///   int size; // sizeof(struct objc_protocol_method_description)
+    ///   struct objc_protocol_method_description {
+    ///     SEL selector;
+    ///     const char *types;
+    ///   } methods[count];
+    /// };
+    ///
+    /// As in the lists Clang emits, the selector is a typed selector record,
+    /// which the runtime registers, with the method's type encoding, and
+    /// types is the method's extended type encoding.
+    llvm::Constant *
+    buildGNUstepProtocolMethodList(ArrayRef<MethodDescriptor> methods,
+                                   StringRef name,
+                                   llvm::GlobalValue::LinkageTypes linkage) {
+      assert(isBuildingProtocol());
+      if (methods.empty())
+        return null();
+
+      ConstantInitBuilder builder(IGM);
+      auto fields = builder.beginStruct();
+      auto countPosition = fields.addPlaceholder();
+      fields.addInt32((2 * IGM.getPointerSize()).getValue());
+
+      auto array = fields.beginArray();
+      for (auto descriptor : methods) {
+        assert(descriptor.getKind() == MethodDescriptor::Kind::Method &&
+               "cannot emit descriptor for non-method");
+        auto *method = descriptor.getMethod();
+        if (!method->isAvailableDuringLowering())
+          continue;
+
+        auto entry = array.beginStruct();
+        entry.add(getGNUstepProtocolMethodSelector(method));
+        entry.add(getMethodTypeExtendedEncoding(IGM, method));
+        entry.finishAndAddTo(array);
+      }
+
+      if (array.empty()) {
+        array.abandon();
+        fields.abandon();
+        return null();
+      }
+
+      auto count = array.size();
+      array.finishAndAddTo(fields);
+      fields.fillPlaceholderWithInt(countPosition, IGM.Int32Ty, count);
+
+      return buildGlobalVariable(fields, name, /*isConst*/ false, linkage);
+    }
+
+    /// The typed selector record for a method of a protocol, the selector
+    /// that a class's implementation of the method has.
+    llvm::Constant *getGNUstepProtocolMethodSelector(
+        AbstractFunctionDecl *method) {
+      auto *accessor = dyn_cast<AccessorDecl>(method);
+      if (!accessor)
+        return emitObjCMethodDescriptorParts(IGM, method, /*concrete*/ false)
+            .selectorRef;
+
+      if (accessor->getAccessorKind() == AccessorKind::Get)
+        return emitObjCGetterDescriptorParts(IGM, accessor->getStorage())
+            .selectorRef;
+
+      assert(accessor->getAccessorKind() == AccessorKind::Set &&
+             "only getters and setters are Objective-C methods");
+      return emitObjCSetterDescriptorParts(IGM, accessor->getStorage())
+          .selectorRef;
     }
 
     /*** Protocols *********************************************************/
@@ -2466,6 +2619,81 @@ namespace {
           [&](ConstantArrayBuilder &descriptors, VarDecl *property) {
             buildProperty(descriptors, property);
           });
+    }
+
+    /// Under the GNUstep runtime, the required or the optional properties of
+    /// a protocol are described by:
+    ///
+    /// struct objc_property_list {
+    ///   int count;
+    ///   int size; // sizeof(struct objc_property)
+    ///   struct objc_property_list *next;
+    ///   struct objc_property {
+    ///     const char *name;
+    ///     const char *attributes;
+    ///     const char *type;
+    ///     SEL getter;
+    ///     SEL setter;
+    ///   } properties[count];
+    /// };
+    llvm::Constant *
+    buildGNUstepProtocolPropertyList(ArrayRef<VarDecl *> properties,
+                                     bool optional, StringRef namePrefix,
+                                     llvm::GlobalValue::LinkageTypes linkage) {
+      assert(isBuildingProtocol());
+
+      ConstantInitBuilder builder(IGM);
+      auto fields = builder.beginStruct();
+      auto countPosition = fields.addPlaceholder();
+      fields.addInt32((5 * IGM.getPointerSize()).getValue());
+      fields.addNullPointer(IGM.Int8PtrTy);
+
+      auto array = fields.beginArray();
+      for (auto *property : properties) {
+        if (property->getAttrs().hasAttribute<OptionalAttr>() == optional)
+          buildGNUstepProperty(array, property);
+      }
+
+      if (array.empty()) {
+        array.abandon();
+        fields.abandon();
+        return null();
+      }
+
+      auto count = array.size();
+      array.finishAndAddTo(fields);
+      fields.fillPlaceholderWithInt(countPosition, IGM.Int32Ty, count);
+
+      return buildGlobalVariable(fields, namePrefix, /*isConst*/ true,
+                                 linkage);
+    }
+
+    /// The getter and setter are typed selector records, as in the methods
+    /// of the protocol, and are null for a property without the accessor.
+    void buildGNUstepProperty(ConstantArrayBuilder &properties,
+                              VarDecl *property) {
+      llvm::SmallString<16> attributes;
+      buildPropertyAttributes(property, attributes);
+      std::string typeEncoding;
+      getObjCEncodingForPropertyType(IGM, property, typeEncoding);
+
+      auto fields = properties.beginStruct();
+      fields.add(
+          IGM.getAddrOfGlobalString(property->getObjCPropertyName().str(),
+                                    CStringSectionType::ObjCPropertyName));
+      fields.add(IGM.getAddrOfGlobalString(
+          attributes, CStringSectionType::ObjCPropertyName));
+      fields.add(IGM.getAddrOfGlobalString(
+          typeEncoding, CStringSectionType::ObjCPropertyName));
+      if (property->getOpaqueAccessor(AccessorKind::Get))
+        fields.add(emitObjCGetterDescriptorParts(IGM, property).selectorRef);
+      else
+        fields.addNullPointer(IGM.Int8PtrTy);
+      if (property->getOpaqueAccessor(AccessorKind::Set))
+        fields.add(emitObjCSetterDescriptorParts(IGM, property).selectorRef);
+      else
+        fields.addNullPointer(IGM.Int8PtrTy);
+      fields.finishAndAddTo(properties);
     }
 
     /*** General ***********************************************************/
@@ -2973,8 +3201,8 @@ llvm::Constant *irgen::emitObjCProtocolData(IRGenModule &IGM,
   bool canUseClangEmission = deploymentAvailability.isContainedIn(
     IGM.Context.getSwift58Availability());
 
-  // Clang also emits the GNUstep runtime's protocol records, which the
-  // Swift protocol builder below does not know how to lay out.
+  // Under the GNUstep runtime, a protocol declared in Objective-C always
+  // gets Clang's record, the one Objective-C code in the image has.
   if ((llvm::Triple(IGM.Module.getTargetTriple()).isOSDarwin() &&
        canUseClangEmission) ||
       IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {

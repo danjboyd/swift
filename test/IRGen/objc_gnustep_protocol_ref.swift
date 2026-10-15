@@ -17,9 +17,10 @@ import GNUstepNSObject
 // CHECK-DAG: @"\01l_OBJC_PROTOCOL_REFERENCE_$_NSCoding" = weak hidden global ptr @._OBJC_PROTOCOL_NSCoding, section "__objc_protocol_refs", align 8
 // CHECK-DAG: @._OBJC_PROTOCOL_NSCoding = {{.*}}section "__objc_protocols"
 
-// The record emitted for a protocol declared in Swift is not registered by
-// the runtime, so its reference is not given to the runtime to fix up.
-// CHECK-DAG: @"\01l_OBJC_PROTOCOL_REFERENCE_$__TtP25objc_gnustep_protocol_ref5Local_" = weak hidden global ptr {{.*}}, section "__objc_protorefs", align 8
+// A protocol declared in Swift has the record Swift emits into
+// __objc_protocols, and its references are fixed up in the same way.
+// CHECK-DAG: @"\01l_OBJC_PROTOCOL_REFERENCE_$_Local" = weak hidden global ptr @_PROTOCOL_Local, section "__objc_protocol_refs", align 8
+// CHECK-DAG: @_PROTOCOL_Local = {{.*}}section "__objc_protocols"
 
 @objc public protocol Local {}
 
@@ -30,7 +31,7 @@ public func conversion() -> Protocol {
 }
 
 // CHECK-LABEL: define {{.*}} @"$s25objc_gnustep_protocol_ref5localSo8ProtocolCyF"()
-// CHECK: load ptr, ptr @"\01l_OBJC_PROTOCOL_REFERENCE_$__TtP25objc_gnustep_protocol_ref5Local_", align 8
+// CHECK: load ptr, ptr @"\01l_OBJC_PROTOCOL_REFERENCE_$_Local", align 8
 public func local() -> Protocol {
   return Local.self
 }
