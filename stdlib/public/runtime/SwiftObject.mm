@@ -124,11 +124,23 @@ static Class objcObjectFormalClass(id objcObject) {
   // isa is its class.  class_respondsToSelector() does not initialize the
   // class; it can miss -class only for a class that has not received a
   // message yet, which also has no dynamic subclass.
+  //
+  // A proxy may also answer Nil to -class, to hide what it is, as the
+  // listener of GNUstep's services manager does.  Nil is not a class, and
+  // the dynamic type of an object must not be null metadata: an Any whose
+  // type is null reads as an empty Optional<Any>.  The isa stands in there
+  // too.
   Class isa = object_getClass(objcObject);
-  if (!class_respondsToSelector(isa, @selector(class)))
-    return class_isMetaClass(isa) ? reinterpret_cast<Class>(objcObject) : isa;
-#endif
+  Class objcClass = Nil;
+  if (class_respondsToSelector(isa, @selector(class)))
+    objcClass = [objcObject class];
+  if (objcClass == Nil)
+    objcClass = class_isMetaClass(isa) ? reinterpret_cast<Class>(objcObject)
+                                       : isa;
+  return objcClass;
+#else
   return [objcObject class];
+#endif
 }
 
 /// Fetch the ObjC class object associated with the formal dynamic

@@ -1,0 +1,4 @@
+module GNUstepNilClass {
+  header "NilClass.h"
+  export *
+}
