@@ -6876,9 +6876,15 @@ bool ConstraintSystem::repairFailures(
         auto paramIdx = argConv->getParamIdx();
 
         auto *argLoc = getConstraintLocator(anchor, path);
-        if (auto overload = findSelectedOverloadFor(getCalleeLocator(argLoc))) {
-          auto *overloadTy =
-              simplifyType(overload->boundType)->castTo<FunctionType>();
+        auto overload = findSelectedOverloadFor(getCalleeLocator(argLoc));
+        // An optional protocol requirement, or a method found through
+        // AnyObject lookup, is bound to an optional function type.
+        auto *overloadTy =
+            overload ? simplifyType(overload->boundType)
+                           ->lookThroughAllOptionalTypes()
+                           ->getAs<FunctionType>()
+                     : nullptr;
+        if (overloadTy) {
           auto *argList = getArgumentList(argLoc);
           ASSERT(argList);
           conversionsOrFixes.push_back(AllowArgumentMismatch::create(
