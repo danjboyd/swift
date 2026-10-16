@@ -5438,10 +5438,11 @@ namespace {
 /// ._OBJC_REF_CLASS_<name>, through which other images refer to the class,
 /// unless this module already has a reference to it.  The reference is as
 /// visible as the class symbol.
-static void emitGNUstepObjCClassRef(IRGenModule &IGM, StringRef runtimeName,
+static void emitGNUstepObjCClassRef(IRGenModule &IGM, ClassDecl *classDecl,
                                     llvm::Constant *classObject,
                                     const LinkInfo &classLink) {
-  auto refName = (Twine("._OBJC_REF_CLASS_") + runtimeName).str();
+  auto refName =
+      LinkEntity::forObjCClassRef(classDecl).mangleAsString(IGM.Context);
   if (IGM.Module.getNamedValue(refName))
     return;
 
@@ -5480,11 +5481,8 @@ static void emitObjCClassSymbol(IRGenModule &IGM, ClassDecl *classDecl,
   ApplyIRLinkage({link.getLinkage(), link.getVisibility(), link.getDLLStorage()})
       .to(alias, link.isForDefinition());
 
-  if (IGM.Context.LangOpts.usesGNUstepObjCRuntime()) {
-    llvm::SmallString<64> nameBuffer;
-    emitGNUstepObjCClassRef(IGM, classDecl->getObjCRuntimeName(nameBuffer),
-                            metadata, link);
-  }
+  if (IGM.Context.LangOpts.usesGNUstepObjCRuntime())
+    emitGNUstepObjCClassRef(IGM, classDecl, metadata, link);
 }
 
 /// The method, ivar, protocol or property list that GenClass emitted for the
@@ -5578,7 +5576,7 @@ emitGNUstepObjCClassRecord(IRGenModule &IGM, ClassDecl *classDecl,
       {link.getLinkage(), link.getVisibility(), link.getDLLStorage()})
       .to(global, link.isForDefinition());
   global->setExternallyInitialized(true);
-  emitGNUstepObjCClassRef(IGM, runtimeName, global, link);
+  emitGNUstepObjCClassRef(IGM, classDecl, global, link);
 
   return llvm::ConstantExpr::getBitCast(global, IGM.ObjCClassPtrTy);
 }

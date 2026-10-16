@@ -41,7 +41,7 @@ import GNUstepNSObject
 
 // A class adopting the protocol lists the record, which the runtime has
 // registered by the time it loads the class.
-// CHECK-DAG: @_PROTOCOLS_Pinger = internal constant { ptr, i64, [1 x ptr] } { ptr null, i64 1, [1 x ptr] [ptr @_PROTOCOL_Pinging] }
+// CHECK-DAG: @_PROTOCOLS_objc_gnustep_protocol.Pinger = internal constant { ptr, i64, [1 x ptr] } { ptr null, i64 1, [1 x ptr] [ptr @_PROTOCOL_Pinging] }
 
 // References to the protocol are fixed up by the runtime.
 // CHECK-DAG: @"\01l_OBJC_PROTOCOL_REFERENCE_$_Pinging" = weak hidden global ptr @_PROTOCOL_Pinging, section "__objc_protocol_refs", align 8

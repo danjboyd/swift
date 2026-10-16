@@ -1,0 +1,4 @@
+module GNUstepClassNames {
+  header "ClassNames.h"
+  export *
+}

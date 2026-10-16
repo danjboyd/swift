@@ -490,8 +490,21 @@ void TBDGenVisitor::addLinkEntity(LinkEntity entity) {
 void TBDGenVisitor::addObjCInterface(ClassDecl *CD) {
   // FIXME: We ought to have a symbol source for this.
   SmallString<128> buffer;
-  addSymbol(CD->getObjCRuntimeName(buffer), SymbolSource::forUnknown(),
-            SymbolFlags::Data, EncodeKind::ObjectiveCClass);
+  StringRef name = CD->getObjCRuntimeName(buffer);
+
+  // GNUstep runtime class symbols carry the name Clang gives the class,
+  // which can differ from its runtime name; take it from the class symbol.
+  std::string classSymbol;
+  auto &ctx = SwiftModule->getASTContext();
+  if (ctx.LangOpts.usesGNUstepObjCRuntime()) {
+    classSymbol = LinkEntity::forObjCClass(CD).mangleAsString(ctx);
+    name = classSymbol;
+    [[maybe_unused]] bool prefixed = name.consume_front("._OBJC_CLASS_");
+    assert(prefixed && "not a GNUstep runtime class symbol");
+  }
+
+  addSymbol(name, SymbolSource::forUnknown(), SymbolFlags::Data,
+            EncodeKind::ObjectiveCClass);
   recorder.addObjCInterface(CD);
 }
 

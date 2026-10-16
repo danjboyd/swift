@@ -79,18 +79,33 @@ bool swift::irgen::useDllStorage(const llvm::Triple &triple) {
   return triple.isOSBinFormatCOFF() && !triple.isOSCygMing();
 }
 
-/// The symbol name of an Objective-C class entity: the runtime name of the
-/// class after the prefix that Clang uses for the Objective-C runtime.
+/// The name a GNUstep runtime class symbol carries for a class: the name
+/// Clang gives the class, which is the name of its @interface, since Clang
+/// ignores objc_runtime_name under the GNUstep runtime.  For a Swift class
+/// without an Objective-C name, which registers under its module-qualified
+/// or mangled runtime name, that is the Swift name the generated header
+/// declares it under.
+static StringRef getGNUstepObjCClassSymbolName(const ClassDecl *decl,
+                                               SmallVectorImpl<char> &buffer) {
+  if (!decl->hasClangNode() &&
+      !decl->getAttrs().hasAttribute<ObjCRuntimeNameAttr>()) {
+    auto objc = decl->getAttrs().getAttribute<ObjCAttr>();
+    if (!objc || !objc->getName())
+      return decl->getName().str();
+  }
+  return decl->getObjCRuntimeName(buffer);
+}
+
+/// The symbol name of an Objective-C class entity: the name of the class
+/// after the prefix that Clang uses for the Objective-C runtime.
 static std::string mangleObjCEntityName(const ASTContext &Ctx,
                                         const ClassDecl *decl,
                                         StringRef applePrefix,
                                         StringRef gnustepPrefix) {
   llvm::SmallString<64> buffer;
-  StringRef name = decl->getObjCRuntimeName(buffer);
-  std::string result(Ctx.LangOpts.usesGNUstepObjCRuntime() ? gnustepPrefix
-                                                           : applePrefix);
-  result.append(name.data(), name.size());
-  return result;
+  if (Ctx.LangOpts.usesGNUstepObjCRuntime())
+    return (gnustepPrefix + getGNUstepObjCClassSymbolName(decl, buffer)).str();
+  return (applePrefix + decl->getObjCRuntimeName(buffer)).str();
 }
 
 UniversalLinkageInfo::UniversalLinkageInfo(IRGenModule &IGM)

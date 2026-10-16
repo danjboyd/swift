@@ -39,18 +39,18 @@ import GNUstepNSObject
 // CHECK-DAG: @"_CATEGORY_CLASS_PROPERTIES_NSObject_$_objc_gnustep_category" = internal {{.*}} { i32, i32, ptr, [1 x { ptr, ptr, ptr, ptr, ptr }] } { i32 1, i32 40, ptr null, [1 x { ptr, ptr, ptr, ptr, ptr }] [{ ptr, ptr, ptr, ptr, ptr } { ptr @.str.6.shared, ptr @".str.4.Tq,N", ptr @.str.1.q, ptr @"\01L_gnustep_selector(shared){{(\.[0-9]+)?}}", ptr @"\01L_gnustep_selector(setShared:){{(\.[0-9]+)?}}" }] }
 
 // The properties of a class have the same layout.
-// CHECK-DAG: @_PROPERTIES_Sub = internal {{.*}} { i32, i32, ptr, [1 x { ptr, ptr, ptr, ptr, ptr }] } { i32 1, i32 40, ptr null, [1 x { ptr, ptr, ptr, ptr, ptr }] [{ ptr, ptr, ptr, ptr, ptr } { ptr @.str.5.count, ptr @".str.11.Tq,N,Vcount", ptr @.str.1.q, ptr @"\01L_gnustep_selector(count){{(\.[0-9]+)?}}", ptr @"\01L_gnustep_selector(setCount:){{(\.[0-9]+)?}}" }] }
-// CHECK-DAG: @._OBJC_CLASS_Sub = {{.*}}, ptr @_PROPERTIES_Sub }
+// CHECK-DAG: @_PROPERTIES_objc_gnustep_category.Sub = internal {{.*}} { i32, i32, ptr, [1 x { ptr, ptr, ptr, ptr, ptr }] } { i32 1, i32 40, ptr null, [1 x { ptr, ptr, ptr, ptr, ptr }] [{ ptr, ptr, ptr, ptr, ptr } { ptr @.str.5.count, ptr @".str.11.Tq,N,Vcount", ptr @.str.1.q, ptr @"\01L_gnustep_selector(count){{(\.[0-9]+)?}}", ptr @"\01L_gnustep_selector(setCount:){{(\.[0-9]+)?}}" }] }
+// CHECK-DAG: @._OBJC_CLASS_Sub = {{.*}}, ptr @_PROPERTIES_objc_gnustep_category.Sub }
 
 // A class declared in Swift is named by its runtime name, the name of its
 // class record.  Each extension gets its own category.
-// CHECK-DAG: @"_CATEGORY_Sub_$_objc_gnustep_category" = internal global { ptr, ptr, ptr, ptr, ptr, ptr, ptr } { ptr [[CATEGORY_NAME]], ptr [[SUB_NAME:@[^,]*Sub]], ptr @"_CATEGORY_INSTANCE_METHODS_Sub_$_objc_gnustep_category", ptr null, ptr null, ptr null, ptr null }, section "__objc_cats", align 8
-// CHECK-DAG: @"_CATEGORY_Sub_$_objc_gnustep_category1" = internal global { ptr, ptr, ptr, ptr, ptr, ptr, ptr } { ptr {{@[^,]*objc_gnustep_category1}}, ptr [[SUB_NAME]], ptr @"_CATEGORY_INSTANCE_METHODS_Sub_$_objc_gnustep_category1", ptr null, ptr @"_CATEGORY_PROTOCOLS_Sub_$_objc_gnustep_category1", ptr null, ptr null }, section "__objc_cats", align 8
-// CHECK-DAG: [[SUB_NAME]] = {{.*}} c"Sub\00"
-// CHECK-DAG: @"_CATEGORY_PROTOCOLS_Sub_$_objc_gnustep_category1" = internal {{.*}} { ptr, i64, [1 x ptr] } { ptr null, i64 1, [1 x ptr] [ptr @._OBJC_PROTOCOL_NSCoding] }
+// CHECK-DAG: @"_CATEGORY_objc_gnustep_category.Sub_$_objc_gnustep_category" = internal global { ptr, ptr, ptr, ptr, ptr, ptr, ptr } { ptr [[CATEGORY_NAME]], ptr [[SUB_NAME:@[^,]*Sub]], ptr @"_CATEGORY_INSTANCE_METHODS_objc_gnustep_category.Sub_$_objc_gnustep_category", ptr null, ptr null, ptr null, ptr null }, section "__objc_cats", align 8
+// CHECK-DAG: @"_CATEGORY_objc_gnustep_category.Sub_$_objc_gnustep_category1" = internal global { ptr, ptr, ptr, ptr, ptr, ptr, ptr } { ptr {{@[^,]*objc_gnustep_category1}}, ptr [[SUB_NAME]], ptr @"_CATEGORY_INSTANCE_METHODS_objc_gnustep_category.Sub_$_objc_gnustep_category1", ptr null, ptr @"_CATEGORY_PROTOCOLS_objc_gnustep_category.Sub_$_objc_gnustep_category1", ptr null, ptr null }, section "__objc_cats", align 8
+// CHECK-DAG: [[SUB_NAME]] = {{.*}} c"objc_gnustep_category.Sub\00"
+// CHECK-DAG: @"_CATEGORY_PROTOCOLS_objc_gnustep_category.Sub_$_objc_gnustep_category1" = internal {{.*}} { ptr, i64, [1 x ptr] } { ptr null, i64 1, [1 x ptr] [ptr @._OBJC_PROTOCOL_NSCoding] }
 
 // No list refers to the records, so they are kept by being used.
-// CHECK-DAG: @llvm.used = appending global [{{[0-9]+}} x ptr] [{{.*}}ptr @"_CATEGORY_NSObject_$_objc_gnustep_category"{{.*}}ptr @"_CATEGORY_Sub_$_objc_gnustep_category"{{.*}}ptr @"_CATEGORY_Sub_$_objc_gnustep_category1"{{.*}}]
+// CHECK-DAG: @llvm.used = appending global [{{[0-9]+}} x ptr] [{{.*}}ptr @"_CATEGORY_NSObject_$_objc_gnustep_category"{{.*}}ptr @"_CATEGORY_objc_gnustep_category.Sub_$_objc_gnustep_category"{{.*}}ptr @"_CATEGORY_objc_gnustep_category.Sub_$_objc_gnustep_category1"{{.*}}]
 
 // There is nothing in the Apple runtime's category lists, and no record
 // has the Apple runtime's layout, which refers to the class object.

@@ -7060,6 +7060,40 @@ static StringRef mangleObjCRuntimeName(const NominalTypeDecl *nominal,
   return StringRef(buffer.data(), buffer.size());
 }
 
+/// The name under which Apple's Objective-C runtime shows the class whose
+/// mangled runtime name is \p mangled: Module.Class for a top-level class,
+/// _TtC<module><class>, and the mangled name itself for any other class,
+/// such as a nested, private or local one.  This is the name
+/// NSStringFromClass() returns and NSClassFromString() accepts.
+static StringRef
+demangleObjCRuntimeClassName(StringRef mangled,
+                             llvm::SmallVectorImpl<char> &buffer) {
+  StringRef rest = mangled;
+  if (!rest.consume_front("_TtC"))
+    return mangled;
+
+  auto consumeIdentifier = [&](StringRef &identifier) {
+    unsigned length;
+    if (rest.consumeInteger(10, length) || length == 0 || length > rest.size())
+      return false;
+    identifier = rest.take_front(length);
+    rest = rest.drop_front(length);
+    return true;
+  };
+
+  StringRef module, name;
+  if (rest.consume_front("s"))
+    module = STDLIB_NAME;
+  else if (!consumeIdentifier(module))
+    return mangled;
+  if (!consumeIdentifier(name) || !rest.empty())
+    return mangled;
+
+  std::string demangled = (module + "." + name).str();
+  buffer.assign(demangled.begin(), demangled.end());
+  return StringRef(buffer.data(), buffer.size());
+}
+
 StringRef ClassDecl::getObjCRuntimeName(
                        llvm::SmallVectorImpl<char> &buffer) const {
    auto abiRole = ABIRoleInfo(this);
@@ -7079,12 +7113,15 @@ StringRef ClassDecl::getObjCRuntimeName(
       return name->getString(buffer);
   }
 
-  // The GNUstep runtime uses the unmangled name.
-  if (getASTContext().LangOpts.usesGNUstepObjCRuntime())
-    return getName().str();
-
   // Produce the mangled name for this class.
-  return mangleObjCRuntimeName(this, buffer);
+  StringRef mangled = mangleObjCRuntimeName(this, buffer);
+
+  // The GNUstep runtime does not demangle class names, so a class registers
+  // under the name Apple's runtime shows for it.
+  if (getASTContext().LangOpts.usesGNUstepObjCRuntime())
+    return demangleObjCRuntimeClassName(mangled, buffer);
+
+  return mangled;
 }
 
 ArtificialMainKind Decl::getArtificialMainKind() const {

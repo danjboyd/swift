@@ -1,8 +1,8 @@
 // RUN: %empty-directory(%t)
-// RUN: %target-swift-frontend -emit-ir -enable-objc-interop -disable-objc-attr-requires-foundation-module -I %S/Inputs/objc_override_type_encoding %s -o %t/apple.ll
+// RUN: %target-swift-frontend -emit-ir -module-name objc_override_type_encoding -enable-objc-interop -disable-objc-attr-requires-foundation-module -I %S/Inputs/objc_override_type_encoding %s -o %t/apple.ll
 // RUN: %FileCheck %s < %t/apple.ll
 // RUN: %FileCheck %s -check-prefix=NEGATIVE < %t/apple.ll
-// RUN: %if OS=linux-gnu %{ %target-swift-frontend -emit-ir -enable-objc-interop -objc-runtime=gnustep -disable-objc-attr-requires-foundation-module -validate-tbd-against-ir=none -I %S/Inputs/objc_override_type_encoding %s -o %t/gnustep.ll %}
+// RUN: %if OS=linux-gnu %{ %target-swift-frontend -emit-ir -module-name objc_override_type_encoding -enable-objc-interop -objc-runtime=gnustep -disable-objc-attr-requires-foundation-module -validate-tbd-against-ir=none -I %S/Inputs/objc_override_type_encoding %s -o %t/gnustep.ll %}
 // RUN: %if OS=linux-gnu %{ %FileCheck %s -check-prefixes=CHECK,GNUSTEP < %t/gnustep.ll %}
 // RUN: %if OS=linux-gnu %{ %FileCheck %s -check-prefix=NEGATIVE < %t/gnustep.ll %}
 
@@ -37,7 +37,7 @@ import OverrideBase
 // NEGATIVE-NOT: c"q16@0:8\00"
 // NEGATIVE-NOT: ^v16
 
-// CHECK-LABEL: @_INSTANCE_METHODS_{{(_TtC27objc_override_type_encoding3)?}}Sub =
+// CHECK-LABEL: @_INSTANCE_METHODS_{{(_TtC27objc_override_type_encoding3|objc_override_type_encoding\.)?}}Sub =
 // CHECK-SAME: (initWithCapacity:)", ptr [[INIT]]
 // CHECK-SAME: (textLength)", ptr [[GETTER]]
 // CHECK-SAME: (attributesAtIndex:effectiveRange:)", ptr [[ATTRIBUTES]]
@@ -54,7 +54,7 @@ import OverrideBase
 // A further override of a Swift override uses the Objective-C encoding too.
 // The GNUstep runtime gives each class its own selector records, so the
 // selector name may carry a uniquing suffix.
-// CHECK-LABEL: @_INSTANCE_METHODS_{{(_TtC27objc_override_type_encoding6)?}}SubSub =
+// CHECK-LABEL: @_INSTANCE_METHODS_{{(_TtC27objc_override_type_encoding6|objc_override_type_encoding\.)?}}SubSub =
 // CHECK-SAME: (textLength){{(\.[0-9]+)?}}", ptr [[GETTER]]
 
 class Sub: Base, Counting {
