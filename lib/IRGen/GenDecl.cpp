@@ -6152,11 +6152,16 @@ void IRGenModule::emitExtension(ExtensionDecl *ext) {
 
     auto *theClass = ext->getSelfClassDecl();
 
-    // Categories on class stubs are added to a separate list.
-    if (theClass->checkAncestry(AncestryFlags::ResilientOther))
-      ObjCCategoriesOnStubs.push_back(category);
-    else
-      ObjCCategories.push_back(category);
+    // Categories on class stubs are added to a separate list.  Under the
+    // GNUstep runtime, the category record is itself in the runtime's
+    // category section, and the runtime finds its class by name, so it is in
+    // neither list.
+    if (!Context.LangOpts.usesGNUstepObjCRuntime()) {
+      if (theClass->checkAncestry(AncestryFlags::ResilientOther))
+        ObjCCategoriesOnStubs.push_back(category);
+      else
+        ObjCCategories.push_back(category);
+    }
 
     ObjCCategoryDecls.push_back(ext);
   }

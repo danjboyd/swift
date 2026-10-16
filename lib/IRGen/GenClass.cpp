@@ -1510,6 +1510,9 @@ namespace {
   public:
     llvm::Constant *emitCategory() {
       assert(TheExtension && "can't emit category data for a class");
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime())
+        return emitGNUstepCategory();
+
       ConstantInitBuilder builder(IGM);
       auto fields = builder.beginStruct();
       auto internalLinkage = llvm::GlobalVariable::InternalLinkage;
@@ -1542,6 +1545,59 @@ namespace {
       assert(fields.getNextOffsetFromGlobal() == size);
       return buildGlobalVariable(fields, "_CATEGORY_", /*const*/ true,
                                  internalLinkage);
+    }
+
+    /// Under the GNUstep runtime, emit the category record in the layout of
+    /// the gnustep-2.0 ABI, the one Clang emits for a category implemented in
+    /// Objective-C, which is libobjc2's struct objc_category, into the
+    /// __objc_cats section.  When it loads the image, after the image's
+    /// classes, the runtime attaches each record in that section to the class
+    /// that objc_getClass() returns for the record's class name, or keeps the
+    /// record until an image that defines the class is loaded.  It reads the
+    /// section as an array of records, so a record is exactly this
+    /// structure.
+    llvm::Constant *emitGNUstepCategory() {
+      assert(isBuildingCategory() && "not emitting a category");
+
+      ConstantInitBuilder builder(IGM);
+      auto fields = builder.beginStruct();
+      auto internalLinkage = llvm::GlobalVariable::InternalLinkage;
+      llvm::SmallString<64> classNameBuffer;
+      StringRef className = getEntityName(classNameBuffer);
+
+      // struct objc_category {
+      //   const char *name;
+      fields.add(IGM.getAddrOfGlobalString(CategoryName,
+                                           CStringSectionType::ObjCClassName));
+      //   const char *class_name;
+      // The runtime finds the class by name, so the record needs no
+      // reference to the class object, which for a class declared in
+      // Objective-C may be in another image.
+      fields.add(IGM.getAddrOfGlobalString(className,
+                                           CStringSectionType::ObjCClassName));
+      //   struct objc_method_list *instance_methods;
+      emitAndAddMethodList(fields, MethodListKind::InstanceMethods,
+                           internalLinkage);
+      //   struct objc_method_list *class_methods;
+      emitAndAddMethodList(fields, MethodListKind::ClassMethods,
+                           internalLinkage);
+      //   struct objc_protocol_list *protocols;
+      fields.add(buildProtocolList(internalLinkage));
+      //   struct objc_property_list *properties;
+      fields.add(buildPropertyList(ForClass, internalLinkage));
+      //   struct objc_property_list *class_properties;
+      fields.add(buildPropertyList(ForMetaClass, internalLinkage));
+      // };
+      assert(fields.getNextOffsetFromGlobal() == 7 * IGM.getPointerSize());
+
+      // Like Clang's records, the record is not constant, and is kept by
+      // being used rather than by a list that refers to it.
+      auto *record = fields.finishAndCreateGlobal(
+          Twine("_CATEGORY_") + className + "_$_" + CategoryName.str(),
+          IGM.getPointerAlignment(), /*constant*/ false, internalLinkage);
+      record->setSection(IGM.GetObjCSectionName("__objc_cats", ""));
+      IGM.addUsedGlobal(record);
+      return record;
     }
     
     llvm::Constant *emitProtocol() {
@@ -2612,6 +2668,9 @@ namespace {
     llvm::Constant *buildPropertyList(ArrayRef<VarDecl *> properties,
                                       StringRef namePrefix,
                                       llvm::GlobalValue::LinkageTypes linkage) {
+      if (IGM.Context.LangOpts.usesGNUstepObjCRuntime())
+        return buildGNUstepPropertyList(properties, namePrefix, linkage);
+
       Size eltSize = 2 * IGM.getPointerSize();
       return buildOptionalList(
           properties, eltSize, namePrefix,
@@ -2622,7 +2681,23 @@ namespace {
     }
 
     /// Under the GNUstep runtime, the required or the optional properties of
-    /// a protocol are described by:
+    /// a protocol are described by a property list, like the properties of a
+    /// class or a category.
+    llvm::Constant *
+    buildGNUstepProtocolPropertyList(ArrayRef<VarDecl *> properties,
+                                     bool optional, StringRef namePrefix,
+                                     llvm::GlobalValue::LinkageTypes linkage) {
+      assert(isBuildingProtocol());
+
+      SmallVector<VarDecl *, 8> selected;
+      for (auto *property : properties) {
+        if (property->getAttrs().hasAttribute<OptionalAttr>() == optional)
+          selected.push_back(property);
+      }
+      return buildGNUstepPropertyList(selected, namePrefix, linkage);
+    }
+
+    /// Under the GNUstep runtime, properties are described by:
     ///
     /// struct objc_property_list {
     ///   int count;
@@ -2636,40 +2711,33 @@ namespace {
     ///     SEL setter;
     ///   } properties[count];
     /// };
+    ///
+    /// The runtime links the property list of a category to the class's
+    /// list through next.
     llvm::Constant *
-    buildGNUstepProtocolPropertyList(ArrayRef<VarDecl *> properties,
-                                     bool optional, StringRef namePrefix,
-                                     llvm::GlobalValue::LinkageTypes linkage) {
-      assert(isBuildingProtocol());
+    buildGNUstepPropertyList(ArrayRef<VarDecl *> properties,
+                             StringRef namePrefix,
+                             llvm::GlobalValue::LinkageTypes linkage) {
+      if (properties.empty())
+        return null();
 
       ConstantInitBuilder builder(IGM);
       auto fields = builder.beginStruct();
-      auto countPosition = fields.addPlaceholder();
+      fields.addInt32(properties.size());
       fields.addInt32((5 * IGM.getPointerSize()).getValue());
       fields.addNullPointer(IGM.Int8PtrTy);
 
       auto array = fields.beginArray();
-      for (auto *property : properties) {
-        if (property->getAttrs().hasAttribute<OptionalAttr>() == optional)
-          buildGNUstepProperty(array, property);
-      }
-
-      if (array.empty()) {
-        array.abandon();
-        fields.abandon();
-        return null();
-      }
-
-      auto count = array.size();
+      for (auto *property : properties)
+        buildGNUstepProperty(array, property);
       array.finishAndAddTo(fields);
-      fields.fillPlaceholderWithInt(countPosition, IGM.Int32Ty, count);
 
       return buildGlobalVariable(fields, namePrefix, /*isConst*/ true,
                                  linkage);
     }
 
-    /// The getter and setter are typed selector records, as in the methods
-    /// of the protocol, and are null for a property without the accessor.
+    /// The getter and setter are typed selector records, as in method lists,
+    /// and are null for a property without the accessor.
     void buildGNUstepProperty(ConstantArrayBuilder &properties,
                               VarDecl *property) {
       llvm::SmallString<16> attributes;
