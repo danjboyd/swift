@@ -106,3 +106,34 @@ func describeUserInfo(_ error: Error) -> String {
 }
 // CHECK-NEXT: Failure
 print(describeUserInfo(Failure.first).split(separator: ".").last!)
+
+// An instance of a Swift class that is no NSError does not cast to an
+// error type.  The class may have only its Swift metadata, which libobjc2
+// cannot read; asking it for the superclass read the metadata's rodata
+// pointer as class flags and, for about half the classes, wrote through
+// fields that do not exist.  Enough classes that some have that flag clear.
+class Shape {}
+final class Shape0: Shape {}
+final class Shape1: Shape {}
+final class Shape2: Shape {}
+final class Shape3: Shape {}
+final class Shape4: Shape {}
+final class Shape5: Shape {}
+final class Shape6: Shape {}
+final class Shape7: Shape {}
+final class Shape8: Shape {}
+final class Shape9: Shape {}
+final class Shape10: Shape {}
+final class Shape11: Shape {}
+final class Shape12: Shape {}
+final class Shape13: Shape {}
+final class Shape14: Shape {}
+final class Shape15: Shape {}
+let shapes: [Shape] = [
+  Shape(), Shape0(), Shape1(), Shape2(), Shape3(), Shape4(), Shape5(),
+  Shape6(), Shape7(), Shape8(), Shape9(), Shape10(), Shape11(), Shape12(),
+  Shape13(), Shape14(), Shape15()
+]
+// CHECK-NEXT: 0 0
+print(shapes.filter { ($0 as Any) as? Failure != nil }.count,
+      shapes.filter { ($0 as AnyObject) as? StoredError != nil }.count)

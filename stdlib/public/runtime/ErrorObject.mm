@@ -799,13 +799,17 @@ static ConvertNSErrorToErrorFunction getFoundationConvertNSErrorToError() {
             MANGLE_AS_STRING(MANGLE_SYM(10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF)))));
 }
 
-/// Whether OBJECT is an instance of CLS or of a subclass.  The class
-/// hierarchy is walked rather than sending -isKindOfClass:, which proxies
-/// forward.
-static bool isKindOfClass(HeapObject *object, Class cls) {
-  for (Class c = object_getClass(reinterpret_cast<id>(object)); c != Nil;
-       c = class_getSuperclass(c)) {
-    if (c == cls)
+/// Whether OBJECT is an NSError.  The class hierarchy is walked rather than
+/// sending -isKindOfClass:, which proxies forward, and through Swift metadata
+/// rather than with class_getSuperclass: a Swift class without a GNUstep
+/// class record has only its Swift metadata, whose rodata pointer libobjc2
+/// would read as class flags (and then try to resolve the class).
+static bool isNSError(HeapObject *object) {
+  const Metadata *nsErrorMetadata = getNSErrorMetadata();
+  for (auto type =
+           swift_getObjCClassMetadata(_swift_getClassOfAllocated(object));
+       type != nullptr; type = _swift_class_getSuperclass(type)) {
+    if (type == nsErrorMetadata)
       return true;
   }
   return false;
@@ -820,12 +824,10 @@ bool swift::tryDynamicCastNSErrorObjectToValue(HeapObject *object,
                                                OpaqueValue *dest,
                                                const Metadata *destType,
                                                DynamicCastFlags flags) {
-  Class NSErrorClass = getNSErrorClass();
-
   // The object must be an NSError subclass, and the Foundation overlay must
   // be loaded.
-  if (!NSErrorClass || isObjCTaggedPointerOrNull(object) ||
-      !isKindOfClass(object, NSErrorClass))
+  if (!getNSErrorClass() || isObjCTaggedPointerOrNull(object) ||
+      !isNSError(object))
     return false;
 
   id srcInstance = reinterpret_cast<id>(object);
