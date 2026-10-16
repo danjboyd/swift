@@ -1,0 +1,4 @@
+module GNUstepNSError {
+  header "NSError.h"
+  export *
+}

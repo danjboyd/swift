@@ -684,8 +684,10 @@ swift::swift_errorRelease(SwiftError *error) {
 
 #include "ErrorObject.h"
 #include "Private.h"
+#include "swift/Basic/Lazy.h"
 #include "swift/Demangling/ManglingMacros.h"
 #include "swift/Runtime/Casting.h"
+#include <dlfcn.h>
 
 using namespace swift;
 
@@ -701,34 +703,69 @@ id _swift_stdlib_getErrorDefaultUserInfo(OpaqueValue *, const Metadata *,
   return nil;
 }
 
-/// An error can only become an NSError that it embeds.
-id swift::_swift_stdlib_bridgeErrorToNSError(SwiftError *errorObject) {
-  id ns = reinterpret_cast<id>(errorObject);
-  auto value = SwiftError::getIndirectValue(&errorObject);
-  auto type = errorObject->getType();
-  auto witness = errorObject->getErrorConformance();
+// public func Foundation._convertErrorToNSError(_ error: Error) -> NSError
+typedef SWIFT_CC(swift) id (*ConvertErrorToNSErrorFunction)(SwiftError *error);
 
-  if (id embedded = getErrorEmbeddedNSErrorIndirect(value, type, witness)) {
-    swift_unknownObjectRetain(embedded);
-    swift_unknownObjectRelease(ns);
-    return embedded;
-  }
-
-  swift_unknownObjectRelease(ns);
-  return nil;
+/// The Foundation overlay's conversion of an error to an NSError: the NSError
+/// the error embeds, else one that stands for the Swift error.  Null when
+/// the overlay is not loaded.
+static ConvertErrorToNSErrorFunction getFoundationConvertErrorToNSError() {
+  return SWIFT_LAZY_CONSTANT(
+    reinterpret_cast<ConvertErrorToNSErrorFunction>(
+      dlsym(RTLD_DEFAULT,
+            MANGLE_AS_STRING(MANGLE_SYM(10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF)))));
 }
 
+/// Make an error into an NSError through the Foundation overlay, as Apple's
+/// runtime does through __SwiftNativeNSError.  Without the overlay an error
+/// can only become an NSError that it embeds, and is nil otherwise.  The
+/// error is passed at +1.
+id swift::_swift_stdlib_bridgeErrorToNSError(SwiftError *errorObject) {
+  id result;
+  if (auto convert = getFoundationConvertErrorToNSError()) {
+    result = convert(errorObject);
+  } else {
+    auto value = SwiftError::getIndirectValue(&errorObject);
+    result = getErrorEmbeddedNSErrorIndirect(value, errorObject->getType(),
+                                             errorObject->getErrorConformance());
+  }
+  swift_errorRelease(errorObject);
+  return result;
+}
+
+/// The NSError class, when every Swift error can become an NSError: Nil
+/// unless the Foundation overlay is loaded.  The casts to NSError check
+/// this before bridging an error.
 Class swift::getNSErrorClass() {
-  return Nil;
+  return SWIFT_LAZY_CONSTANT(getFoundationConvertErrorToNSError()
+                                 ? objc_lookUpClass("NSError")
+                                 : Nil);
 }
 
 const Metadata *swift::getNSErrorMetadata() {
-  return nullptr;
+  return SWIFT_LAZY_CONSTANT(
+    getNSErrorClass()
+      ? swift_getObjCClassMetadata((const ClassMetadata *)getNSErrorClass())
+      : nullptr);
 }
 
-id swift::dynamicCastValueToNSError(OpaqueValue *, const Metadata *,
-                                    const WitnessTable *, DynamicCastFlags) {
-  return nil;
+id swift::dynamicCastValueToNSError(OpaqueValue *src,
+                                    const Metadata *srcType,
+                                    const WitnessTable *srcErrorWitness,
+                                    DynamicCastFlags flags) {
+  // Check whether there is an embedded NSError.
+  if (id embedded = getErrorEmbeddedNSErrorIndirect(src, srcType,
+                                                    srcErrorWitness)) {
+    if (flags & DynamicCastFlags::TakeOnSuccess)
+      srcType->vw_destroy(src);
+
+    return embedded;
+  }
+
+  BoxPair errorBox = swift_allocError(srcType, srcErrorWitness, src,
+                            /*isTake*/ flags & DynamicCastFlags::TakeOnSuccess);
+  auto *error = (SwiftError *)errorBox.object;
+  return _swift_stdlib_bridgeErrorToNSError(error);
 }
 
 bool swift::tryDynamicCastNSErrorObjectToValue(HeapObject *, OpaqueValue *,
