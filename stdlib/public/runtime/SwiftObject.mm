@@ -1452,7 +1452,7 @@ const Metadata *swift_dynamicCastTypeToObjCProtocolUnconditional(
   case MetadataKind::ObjCClassWrapper:
     // Native class metadata is also the class object.
     // ObjC class wrappers get unwrapped.
-    classObject = type->getObjCClassObject();
+    classObject = getObjCClassObjectOfType(type);
     break;
 
   // Other kinds of type can never conform to ObjC protocols.
@@ -1489,7 +1489,7 @@ const Metadata *swift_dynamicCastTypeToObjCProtocolConditional(
   case MetadataKind::ObjCClassWrapper:
     // Native class metadata is also the class object.
     // ObjC class wrappers get unwrapped.
-    classObject = type->getObjCClassObject();
+    classObject = getObjCClassObjectOfType(type);
     break;
 
   // Other kinds of type can never conform to ObjC protocols.

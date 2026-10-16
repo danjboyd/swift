@@ -141,6 +141,21 @@ public:
   
   bool classConformsToObjCProtocol(const void *theClass,
                                    ProtocolDescriptorRef protocol);
+
+  /// The Objective-C class object of a class or Objective-C class wrapper
+  /// type, which is the value of the type's metatype as an object.
+  static inline Class getObjCClassObjectOfType(const Metadata *type) {
+#if defined(__GNUSTEP_RUNTIME__)
+    // Under the GNUstep runtime, a Swift class exposed to Objective-C has a
+    // class record that is separate from its Swift metadata.  The class
+    // record is the class object: instances have it as their isa, and
+    // NSClassFromString() and IRGen's @objc metatypes answer it.
+    return reinterpret_cast<Class>(const_cast<ClassMetadata *>(
+        swift_getObjCClassFromMetadata(type)));
+#else
+    return type->getObjCClassObject();
+#endif
+  }
 #endif
 
   /// Is the given value a valid alignment mask?

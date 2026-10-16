@@ -16,3 +16,5 @@ __attribute__((objc_root_class))
 @end
 
 int class_conformsToProtocol(Class cls, Protocol *protocol);
+Class objc_lookUpClass(const char *name);
+Class object_getClass(id object);

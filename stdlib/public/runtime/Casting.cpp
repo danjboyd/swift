@@ -580,7 +580,8 @@ bool swift::_conformsToProtocol(
       return _unknownClassConformsToObjCProtocol(value,
                                                  protocol.getObjCProtocol());
     } else {
-      return classConformsToObjCProtocol(type, protocol);
+      return classConformsToObjCProtocol(getObjCClassObjectOfType(type),
+                                         protocol);
     }
 #endif
     return false;
@@ -830,7 +831,7 @@ swift_dynamicCastMetatypeToObjectConditional(const Metadata *metatype) {
   case MetadataKind::ObjCClassWrapper:
     // Swift classes are objects in and of themselves.
     // ObjC class wrappers get unwrapped.
-    return (id)metatype->getObjCClassObject();
+    return (id)getObjCClassObjectOfType(metatype);
   
   // Other kinds of metadata don't cast to AnyObject.
   default:
@@ -847,7 +848,7 @@ swift_dynamicCastMetatypeToObjectUnconditional(const Metadata *metatype,
   case MetadataKind::ObjCClassWrapper:
     // Swift classes are objects in and of themselves.
     // ObjC class wrappers get unwrapped.
-    return (id)metatype->getObjCClassObject();
+    return (id)getObjCClassObjectOfType(metatype);
   
   // Other kinds of metadata don't cast to AnyObject.
   default: {
@@ -1383,7 +1384,7 @@ static id bridgeAnythingNonVerbatimToObjectiveC(OpaqueValue *src,
     // Class metatypes bridge to their class object.
     if (isa<ClassMetadata>(srcMetatypeValue)
         || isa<ObjCClassWrapperMetadata>(srcMetatypeValue)) {
-      return (id)srcMetatypeValue->getObjCClassObject();
+      return (id)getObjCClassObjectOfType(srcMetatypeValue);
     
     // ObjC protocols bridge to their Protocol object.
     } else if (auto existential
