@@ -37,6 +37,7 @@
 #include <objc/runtime.h>
 #include <Foundation/Foundation.h>
 
+#include <cstring>
 #include <new>
 #include <unordered_set>
 
@@ -261,6 +262,18 @@ static constexpr size_t getSwiftValuePayloadOffset(size_t alignMask) {
          ~alignMask;
 }
 
+#if defined(__GNUSTEP_RUNTIME__)
+// libobjc2 keeps the reference count of an object in the word before its isa
+// pointer, and class_createInstance() allocates and zeroes that word ahead of
+// every object it creates.  A __SwiftValue needs the same word, or retaining
+// and releasing it changes the allocator's bookkeeping instead.  The prefix
+// is rounded up to the payload alignment, so that the instance keeps the
+// alignment of the allocation.
+static constexpr size_t getSwiftValueRefCountPrefixSize(size_t alignMask) {
+  return (sizeof(uintptr_t) + alignMask) & ~alignMask;
+}
+#endif
+
 static SwiftValueHeader *getSwiftValueHeader(__SwiftValue *v) {
   auto instanceBytes = reinterpret_cast<char *>(v);
   return reinterpret_cast<SwiftValueHeader *>(instanceBytes +
@@ -296,11 +309,16 @@ __SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
   size_t totalSize =
       getSwiftValuePayloadOffset(alignMask) + srcType->getValueWitnesses()->size;
 
-  void *instanceMemory = swift_slowAlloc(totalSize, alignMask);
 #if defined(__GNUSTEP_RUNTIME__)
-  __SwiftValue *instance = reinterpret_cast<__SwiftValue *>(instanceMemory);
+  size_t prefixSize = getSwiftValueRefCountPrefixSize(alignMask);
+  auto allocation = reinterpret_cast<char *>(
+      swift_slowAlloc(prefixSize + totalSize, alignMask));
+  memset(allocation, 0, prefixSize);
+  __SwiftValue *instance =
+      reinterpret_cast<__SwiftValue *>(allocation + prefixSize);
   object_setClass(instance, getSwiftValueClass());
 #else
+  void *instanceMemory = swift_slowAlloc(totalSize, alignMask);
   __SwiftValue *instance
     = objc_constructInstance(getSwiftValueClass(), instanceMemory);
 #endif
@@ -405,7 +423,13 @@ swift::findSwiftValueConformances(const ExistentialTypeMetadata *existentialType
 #endif
   auto totalSize = getSwiftValuePayloadOffset(alignMask) +
                    instanceType->getValueWitnesses()->size;
+#if defined(__GNUSTEP_RUNTIME__)
+  size_t prefixSize = getSwiftValueRefCountPrefixSize(alignMask);
+  swift_slowDealloc(reinterpret_cast<char *>(self) - prefixSize,
+                    prefixSize + totalSize, alignMask);
+#else
   swift_slowDealloc(self, totalSize, alignMask);
+#endif
 }
 #pragma clang diagnostic pop
 

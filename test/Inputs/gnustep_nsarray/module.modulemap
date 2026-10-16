@@ -1,0 +1,4 @@
+module GNUstepNSArray {
+  header "NSArray.h"
+  export *
+}
