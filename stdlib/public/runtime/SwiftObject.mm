@@ -130,6 +130,11 @@ static Class objcObjectFormalClass(id objcObject) {
   // the dynamic type of an object must not be null metadata: an Any whose
   // type is null reads as an empty Optional<Any>.  The isa stands in there
   // too.
+  //
+  // The class object of a Swift class with no Objective-C ancestry cannot
+  // be messaged; it is its own class, as for any class object.
+  if (isSwiftClassMetadataObject(objcObject))
+    return reinterpret_cast<Class>(objcObject);
   Class isa = object_getClass(objcObject);
   Class objcClass = Nil;
   if (class_respondsToSelector(isa, @selector(class)))
@@ -704,6 +709,17 @@ static auto const unTaggedNonNativeBridgeObjectBits
 
 #if SWIFT_OBJC_INTEROP
 
+/// Whether reference counting operations on an object that does not use
+/// native Swift reference counting do nothing.
+static inline bool isImmortalNonNativeObject(const void *object) {
+#if defined(__GNUSTEP_RUNTIME__)
+  // libobjc2 does not count references to the class records it knows.
+  return isSwiftClassMetadataObject(object);
+#else
+  return false;
+#endif
+}
+
 #if defined(__x86_64__)
 static uintptr_t const objectPointerIsObjCBit = 0x4000000000000000ULL;
 #elif defined(__LP64__)
@@ -717,6 +733,8 @@ void *swift::swift_unknownObjectRetain_n(void *object, int n) {
   if (objectUsesNativeSwiftReferenceCounting(object)) {
     return swift_retain_n(static_cast<HeapObject *>(object), n);
   }
+  if (isImmortalNonNativeObject(object))
+    return object;
   for (int i = 0; i < n; ++i)
     objc_retain(static_cast<id>(object));
 
@@ -727,6 +745,8 @@ void swift::swift_unknownObjectRelease_n(void *object, int n) {
   if (isObjCTaggedPointerOrNull(object)) return;
   if (objectUsesNativeSwiftReferenceCounting(object))
     return swift_release_n(static_cast<HeapObject *>(object), n);
+  if (isImmortalNonNativeObject(object))
+    return;
   for (int i = 0; i < n; ++i)
     objc_release(static_cast<id>(object));
 }
@@ -736,6 +756,8 @@ void *swift::swift_unknownObjectRetain(void *object) {
   if (objectUsesNativeSwiftReferenceCounting(object)) {
     return swift_retain(static_cast<HeapObject *>(object));
   }
+  if (isImmortalNonNativeObject(object))
+    return object;
   return objc_retain(static_cast<id>(object));
 }
 
@@ -743,6 +765,8 @@ void swift::swift_unknownObjectRelease(void *object) {
   if (isObjCTaggedPointerOrNull(object)) return;
   if (objectUsesNativeSwiftReferenceCounting(object))
     return swift_release(static_cast<HeapObject *>(object));
+  if (isImmortalNonNativeObject(object))
+    return;
   return objc_release(static_cast<id>(object));
 }
 
@@ -751,6 +775,8 @@ void *swift::swift_nonatomic_unknownObjectRetain_n(void *object, int n) {
   if (objectUsesNativeSwiftReferenceCounting(object)) {
     return swift_nonatomic_retain_n(static_cast<HeapObject *>(object), n);
   }
+  if (isImmortalNonNativeObject(object))
+    return object;
   for (int i = 0; i < n; ++i)
     objc_retain(static_cast<id>(object));
   return object;
@@ -760,6 +786,8 @@ void swift::swift_nonatomic_unknownObjectRelease_n(void *object, int n) {
   if (isObjCTaggedPointerOrNull(object)) return;
   if (objectUsesNativeSwiftReferenceCounting(object))
     return swift_nonatomic_release_n(static_cast<HeapObject *>(object), n);
+  if (isImmortalNonNativeObject(object))
+    return;
   for (int i = 0; i < n; ++i)
     objc_release(static_cast<id>(object));
 }
@@ -769,6 +797,8 @@ void *swift::swift_nonatomic_unknownObjectRetain(void *object) {
   if (objectUsesNativeSwiftReferenceCounting(object)) {
     return swift_nonatomic_retain(static_cast<HeapObject *>(object));
   }
+  if (isImmortalNonNativeObject(object))
+    return object;
   return objc_retain(static_cast<id>(object));
 }
 
@@ -776,6 +806,8 @@ void swift::swift_nonatomic_unknownObjectRelease(void *object) {
   if (isObjCTaggedPointerOrNull(object)) return;
   if (objectUsesNativeSwiftReferenceCounting(object))
     return swift_nonatomic_release(static_cast<HeapObject *>(object));
+  if (isImmortalNonNativeObject(object))
+    return;
   return objc_release(static_cast<id>(object));
 }
 

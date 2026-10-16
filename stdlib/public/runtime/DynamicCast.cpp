@@ -834,6 +834,13 @@ struct ObjCBridgeMemo {
       if (srcObject == nullptr) {
         return DynamicCastResult::Failure;
       }
+#if defined(__GNUSTEP_RUNTIME__)
+      // The class object of a Swift class is not an instance of a bridged
+      // class, and libobjc2 cannot walk its metaclass.
+      if (isSwiftClassMetadataObject(srcObject)) {
+        return DynamicCastResult::Failure;
+      }
+#endif
       Class srcObjCType = object_getClass((id)srcObject);
       // Fail if the ObjC object is not a subclass of the bridge class.
       while (srcObjCType != targetBridgedObjCClass) {

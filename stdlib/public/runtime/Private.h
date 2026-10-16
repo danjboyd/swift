@@ -149,7 +149,9 @@ public:
     // Under the GNUstep runtime, a Swift class exposed to Objective-C has a
     // class record that is separate from its Swift metadata.  The class
     // record is the class object: instances have it as their isa, and
-    // NSClassFromString() and IRGen's @objc metatypes answer it.
+    // NSClassFromString() and IRGen's @objc metatypes answer it.  A class
+    // with no Objective-C ancestry has no class record; its class object is
+    // its metadata.
     return reinterpret_cast<Class>(const_cast<ClassMetadata *>(
         swift_getObjCClassFromMetadata(type)));
 #else
@@ -190,6 +192,28 @@ public:
   static inline bool isObjCTaggedPointerOrNull(const void *object) {
     return object == nullptr || isObjCTaggedPointer(object);
   }
+
+#if SWIFT_OBJC_INTEROP && defined(__GNUSTEP_RUNTIME__)
+  /// Is the given object the class object of a Swift class with no
+  /// Objective-C ancestry?
+  ///
+  /// Under the GNUstep runtime, such a class has no GNUstep class record, so
+  /// its metatype converts to AnyObject as its Swift metadata (see
+  /// getObjCClassObjectOfType()).  libobjc2 does not know the metadata as a
+  /// class: it cannot send it messages, and resolving its metaclass would
+  /// write into it, so the runtime must not hand the object to libobjc2.
+  /// Class objects are never deallocated.
+  static inline bool isSwiftClassMetadataObject(const void *object) {
+    if (isObjCTaggedPointerOrNull(object))
+      return false;
+    // A class object's isa is a metaclass; IRGen emits the metaclass of a
+    // non-generic Swift class in the GNUstep runtime's class layout.  The
+    // object is then large enough to read as class metadata.
+    auto isa = *reinterpret_cast<Class const *>(object);
+    return class_isMetaClass(isa) &&
+           reinterpret_cast<const ClassMetadata *>(object)->isTypeMetadata();
+  }
+#endif
 
   /// Return the class of an object which is known to be an allocated
   /// heap object.

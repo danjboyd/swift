@@ -23,6 +23,12 @@ class Coding: NSObject, NSCoding {
   func encode(withCoder coder: Any) {}
 }
 
+// A class with no Objective-C ancestry has no class record; its class object
+// is its metadata, which the runtime must neither retain nor release through
+// libobjc2 nor message.
+class Pure {}
+class PureSub: Pure {}
+
 let record: AnyClass = objc_lookUpClass("Plain")!
 let instanceClass: AnyClass = object_getClass(Plain())!
 
@@ -79,3 +85,39 @@ print(codingType(Coding.self) != nil)
 print(codingClass(Coding.self) != nil)
 // CHECK-NEXT: false
 print(codingType(Plain.self) != nil)
+
+// CHECK-NEXT: true
+print(object(Pure.self) === Pure.self as AnyObject)
+// CHECK-NEXT: true
+print(conditionalObject(Pure.self) === object(Pure.self))
+// CHECK-NEXT: true
+print(forcedObject(Pure.self) === object(Pure.self))
+// CHECK-NEXT: true
+print(object(Pure.self as AnyClass) === object(Pure.self))
+// CHECK-NEXT: false
+print(object(Pure.self) === object(PureSub.self))
+
+@inline(never)
+func retainAndRelease(_ value: Any, times: Int) -> Int {
+  var objects: [AnyObject] = []
+  for _ in 0..<times {
+    objects.append(object(value))
+  }
+  return objects.filter { $0 === objects[0] }.count
+}
+// CHECK-NEXT: 1000
+print(retainAndRelease(Pure.self, times: 1000))
+// CHECK-NEXT: 1000
+print(retainAndRelease(PureSub.self, times: 1000))
+
+// The object converts back to the metatype.
+// CHECK-NEXT: true
+print((object(Pure.self) as? Pure.Type).map { $0 == Pure.self } ?? false)
+// CHECK-NEXT: true
+print((object(PureSub.self) as? Pure.Type).map { $0 == PureSub.self } ?? false)
+// CHECK-NEXT: false
+print(object(Pure.self) is PureSub.Type)
+// CHECK-NEXT: false
+print(object(Pure.self) is Plain.Type)
+// CHECK-NEXT: false
+print(String(describing: object(Pure.self)).isEmpty)
