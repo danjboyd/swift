@@ -1,6 +1,6 @@
 // RUN: %empty-directory(%t)
 // RUN: split-file %s %t
-// RUN: %target-typecheck-verify-swift -enable-objc-interop -disable-objc-attr-requires-foundation-module -I %t/Inputs
+// RUN: %target-swift-frontend -typecheck -verify -enable-objc-interop -disable-objc-attr-requires-foundation-module -I %t/Inputs %t/main.swift
 
 // An optional protocol requirement, and a method found through AnyObject
 // lookup, is bound to an optional function type.  Diagnosing an optional
