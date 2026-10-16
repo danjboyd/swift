@@ -2436,6 +2436,16 @@ tryCast(
       return subcastResult;
     }
 #endif
+
+#if SWIFT_OBJC_INTEROP && defined(__GNUSTEP_RUNTIME__)
+    // Try unwrapping an NSError container that is a Swift class: under the
+    // GNUstep runtime, the Foundation overlay's NSError for a Swift error.
+    auto innerFlags = DynamicCastFlags::Default;
+    if (tryDynamicCastNSErrorToValue(
+          destLocation, srcValue, srcType, destType, innerFlags)) {
+      return DynamicCastResult::SuccessViaCopy;
+    }
+#endif
     break;
   }
 

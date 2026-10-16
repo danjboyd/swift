@@ -697,10 +697,28 @@ const WitnessTable *swift::findErrorWitness(const Metadata *srcType) {
   return swift_conformsToProtocolCommon(srcType, &PROTOCOL_DESCR_SYM(s5Error));
 }
 
+/// The user info an error has by default as an NSError: what the Foundation
+/// overlay's CustomNSError, LocalizedError and RecoverableError conformances
+/// give, found by name as with Apple's runtime.  Nil without the overlay.
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_INTERNAL
-id _swift_stdlib_getErrorDefaultUserInfo(OpaqueValue *, const Metadata *,
-                                         const WitnessTable *) {
-  return nil;
+id _swift_stdlib_getErrorDefaultUserInfo(OpaqueValue *error,
+                                         const Metadata *T,
+                                         const WitnessTable *Error) {
+  // public func Foundation._getErrorDefaultUserInfo<T: Error>(_ error: T)
+  //   -> AnyObject?
+  typedef SWIFT_CC(swift) id (*GetErrorDefaultUserInfoFunction)(
+    const OpaqueValue *error,
+    const Metadata *T,
+    const WitnessTable *Error);
+  auto foundationGetDefaultUserInfo = SWIFT_LAZY_CONSTANT(
+    reinterpret_cast<GetErrorDefaultUserInfoFunction>(
+      dlsym(RTLD_DEFAULT,
+            MANGLE_AS_STRING(MANGLE_SYM(10Foundation24_getErrorDefaultUserInfoyyXlSgxs0C0RzlF)))));
+
+  if (!foundationGetDefaultUserInfo)
+    return nil;
+
+  return foundationGetDefaultUserInfo(error, T, Error);
 }
 
 // public func Foundation._convertErrorToNSError(_ error: Error) -> NSError
@@ -768,16 +786,131 @@ id swift::dynamicCastValueToNSError(OpaqueValue *src,
   return _swift_stdlib_bridgeErrorToNSError(error);
 }
 
-bool swift::tryDynamicCastNSErrorObjectToValue(HeapObject *, OpaqueValue *,
-                                               const Metadata *,
-                                               DynamicCastFlags) {
+// public func Foundation._convertNSErrorToError(_ error: NSError?) -> Error
+typedef SWIFT_CC(swift) SwiftError *(*ConvertNSErrorToErrorFunction)(id error);
+
+/// The Foundation overlay's conversion of an NSError to a Swift error: the
+/// Swift error that an NSError made by _convertErrorToNSError stands for,
+/// else the NSError itself.  Null when the overlay is not loaded.
+static ConvertNSErrorToErrorFunction getFoundationConvertNSErrorToError() {
+  return SWIFT_LAZY_CONSTANT(
+    reinterpret_cast<ConvertNSErrorToErrorFunction>(
+      dlsym(RTLD_DEFAULT,
+            MANGLE_AS_STRING(MANGLE_SYM(10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF)))));
+}
+
+/// Whether OBJECT is an instance of CLS or of a subclass.  The class
+/// hierarchy is walked rather than sending -isKindOfClass:, which proxies
+/// forward.
+static bool isKindOfClass(HeapObject *object, Class cls) {
+  for (Class c = object_getClass(reinterpret_cast<id>(object)); c != Nil;
+       c = class_getSuperclass(c)) {
+    if (c == cls)
+      return true;
+  }
   return false;
 }
 
-bool swift::tryDynamicCastNSErrorToValue(OpaqueValue *, OpaqueValue *,
-                                         const Metadata *, const Metadata *,
-                                         DynamicCastFlags) {
+/// Cast an NSError to a Swift error type, as Apple's runtime does: an
+/// NSError that stands for a Swift error casts as that error, and an
+/// arbitrary NSError casts to a type that conforms to the overlay's
+/// _ObjectiveCBridgeableError (CocoaError, for instance) when the type's
+/// init?(_bridgedNSError:) accepts it.
+bool swift::tryDynamicCastNSErrorObjectToValue(HeapObject *object,
+                                               OpaqueValue *dest,
+                                               const Metadata *destType,
+                                               DynamicCastFlags flags) {
+  Class NSErrorClass = getNSErrorClass();
+
+  // The object must be an NSError subclass, and the Foundation overlay must
+  // be loaded.
+  if (!NSErrorClass || isObjCTaggedPointerOrNull(object) ||
+      !isKindOfClass(object, NSErrorClass))
+    return false;
+
+  id srcInstance = reinterpret_cast<id>(object);
+
+  // An NSError made for a Swift error can always be unwrapped to cast the
+  // Swift error back out.  The overlay returns any other NSError as itself.
+  if (auto convert = getFoundationConvertNSErrorToError()) {
+    SwiftError *error = convert(srcInstance);
+    if (!error->isPureNSError()) {
+      ProtocolDescriptorRef theErrorProtocol(&PROTOCOL_DESCR_SYM(s5Error),
+                                             ProtocolDispatchStrategy::Swift);
+      auto theErrorTy =
+        swift_getExistentialTypeMetadata(ProtocolClassConstraint::Any,
+                                         nullptr, 1, &theErrorProtocol);
+      auto innerFlags = DynamicCastFlags::TakeOnSuccess |
+                        DynamicCastFlags::DestroyOnFailure;
+      if (!swift_dynamicCast(dest, reinterpret_cast<OpaqueValue *>(&error),
+                             theErrorTy, destType, innerFlags))
+        return false;
+      if (flags & DynamicCastFlags::TakeOnSuccess)
+        swift_unknownObjectRelease(srcInstance);
+      return true;
+    }
+    swift_errorRelease(error);
+  }
+
+  // public func Foundation._bridgeNSErrorToError<
+  //   T : _ObjectiveCBridgeableError
+  // >(error: NSError, out: UnsafeMutablePointer<T>) -> Bool {
+  typedef SWIFT_CC(swift) bool (*BridgeNSErrorToErrorFunction)(
+    id, OpaqueValue *, const Metadata *, const WitnessTable *);
+  auto bridgeNSErrorToError = SWIFT_LAZY_CONSTANT(
+    reinterpret_cast<BridgeNSErrorToErrorFunction>(
+      dlsym(RTLD_DEFAULT,
+            MANGLE_AS_STRING(MANGLE_SYM(10Foundation21_bridgeNSErrorToError_3outSbSo0C0C_SpyxGtAA021_ObjectiveCBridgeableE0RzlF)))));
+
+  // protocol _ObjectiveCBridgeableError
+  auto TheObjectiveCBridgeableError = SWIFT_LAZY_CONSTANT(
+    reinterpret_cast<const ProtocolDescriptor *>(
+      dlsym(RTLD_DEFAULT,
+            MANGLE_AS_STRING(MANGLE_SYM(10Foundation26_ObjectiveCBridgeableErrorMp)))));
+
+  // Is the target type a bridgeable error?  If so, attempt the bridge.
+  if (bridgeNSErrorToError && TheObjectiveCBridgeableError) {
+    if (auto witness = swift_conformsToProtocolCommon(
+            destType, TheObjectiveCBridgeableError)) {
+      if (bridgeNSErrorToError(srcInstance, dest, destType, witness)) {
+        if (flags & DynamicCastFlags::TakeOnSuccess)
+          swift_unknownObjectRelease(srcInstance);
+        return true;
+      }
+    }
+  }
+
+  // If the destination is just an Error then the NSError is its own value.
+  auto *destTypeExistential = dyn_cast<ExistentialTypeMetadata>(destType);
+  if (destTypeExistential &&
+      destTypeExistential->getRepresentation() ==
+          ExistentialTypeRepresentation::Error) {
+    if (!(flags & DynamicCastFlags::TakeOnSuccess))
+      swift_unknownObjectRetain(srcInstance);
+    *reinterpret_cast<id *>(dest) = srcInstance;
+    return true;
+  }
+
   return false;
+}
+
+bool swift::tryDynamicCastNSErrorToValue(OpaqueValue *dest,
+                                         OpaqueValue *src,
+                                         const Metadata *srcType,
+                                         const Metadata *destType,
+                                         DynamicCastFlags flags) {
+  // NSError instances must be class instances, anything else automatically
+  // fails.
+  switch (srcType->getKind()) {
+  case MetadataKind::Class:
+  case MetadataKind::ObjCClassWrapper:
+  case MetadataKind::ForeignClass:
+    return tryDynamicCastNSErrorObjectToValue(
+        *reinterpret_cast<HeapObject **>(src), dest, destType, flags);
+
+  default:
+    return false;
+  }
 }
 
 #endif
